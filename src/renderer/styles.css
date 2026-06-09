@@ -92,7 +92,6 @@ h2 {
 }
 
 .setup-message,
-.dependency-strip,
 .url-panel,
 .preview-card,
 .preview-empty,
@@ -126,26 +125,6 @@ h2 {
 .setup-message ul {
   margin: 0;
   padding-left: 18px;
-}
-
-.dependency-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 18px;
-  padding: 10px 12px;
-}
-
-.dependency-strip span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #214f44;
-  font-size: 0.85rem;
-}
-
-.dependency-strip .optional-missing {
-  color: #71695e;
 }
 
 .platform-nav {
@@ -857,7 +836,6 @@ dd {
     align-items: center;
   }
 
-  .dependency-strip,
   .setup-message {
     padding: 10px;
   }

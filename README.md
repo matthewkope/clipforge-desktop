@@ -1,69 +1,178 @@
 # ClipForge Desktop
 
-ClipForge is an Electron + React + TypeScript desktop wrapper around `yt-dlp`.
+ClipForge is an Electron desktop app for downloading video, audio, images,
+captions, and transcripts from supported social-media URLs. It uses local
+command-line tools; media and transcription stay on your computer.
 
-## Features
+## Supported Tools
 
-- Paste a media URL and analyze it with `yt-dlp -J --no-playlist`.
-- Paste a media URL and the app analyzes it automatically after a short pause.
-- Paste a playlist URL and the app analyzes it as a playlist.
-- Playlist previews use the first video's thumbnail when available.
-- Preview title, thumbnail, uploader, duration, source, formats, and captions.
-- Download several outputs from the same video or playlist in one run, such as MP4 plus SRT captions.
-- Create a Markdown transcript from existing captions with one sentence per line and a blank line between sentences.
-- Create a timed `.srt` transcript with timestamps.
-- Choose a save folder with the native desktop picker.
-- Track download progress, speed, ETA, status, and final output location.
-- Cancel active downloads.
-- Check for `yt-dlp`, `ffmpeg`, and `ffprobe` on startup.
-- Automatic no-login YouTube compatibility retries for sign-in or bot-confirmation prompts.
+ClipForge expects these commands to be available on `PATH`:
 
-## Commands
+| Tool | Required | Used for |
+| --- | --- | --- |
+| Node.js and npm | Development only | Running and building the Electron app |
+| `yt-dlp` | Yes | Video analysis and video/audio downloads |
+| `gallery-dl` | Yes | Instagram, Facebook, Pinterest, and general galleries |
+| `ffmpeg` and `ffprobe` | Yes | Merging, conversion, metadata, and transcription audio |
+| `whisper-cli` from whisper.cpp | For transcript fallback | Transcribing media without source captions |
+| `instaloader` | Optional | Instagram fallback support |
+| Brave Browser | Pinterest default setup | Reading Pinterest cookies through the macOS Keychain |
+
+## macOS Setup
+
+### 1. Install Homebrew
+
+If `brew` is not already installed, follow the instructions at
+[brew.sh](https://brew.sh/).
+
+### 2. Install Node.js and media tools
+
+```bash
+brew install node ffmpeg yt-dlp whisper-cpp
+```
+
+Verify the commands:
+
+```bash
+node --version
+npm --version
+yt-dlp --version
+ffmpeg -version
+ffprobe -version
+whisper-cli --help
+```
+
+### 3. Install the Python downloaders
+
+Using `pipx` keeps command-line applications isolated from the system Python:
+
+```bash
+brew install pipx
+pipx ensurepath
+pipx install gallery-dl
+pipx install instaloader
+```
+
+Open a new Terminal window after `pipx ensurepath`, then verify:
+
+```bash
+gallery-dl --version
+instaloader --version
+```
+
+`instaloader` is optional. ClipForge requires `gallery-dl` for photo posts,
+albums, Pinterest boards, and similar gallery content.
+
+## Transcription Setup
+
+ClipForge first uses captions supplied by the source website. If captions are
+unavailable, Timed Transcript and Markdown Transcript use
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp) locally.
+
+The app requires a whisper.cpp-compatible GGML model ending in `.bin`. Download
+models from the official
+[ggerganov/whisper.cpp Hugging Face repository](https://huggingface.co/ggerganov/whisper.cpp).
+Do not select the Core ML `.zip` files.
+
+### Recommended models
+
+| Model | Approximate size | Best use |
+| --- | ---: | --- |
+| [`ggml-base.en.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin?download=true) | 142 MiB | Recommended default for English |
+| [`ggml-base.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true) | 142 MiB | Recommended default for multiple languages |
+| [`ggml-small.en.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true) | 466 MiB | More accurate English transcription |
+| [`ggml-small.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true) | 466 MiB | More accurate multilingual transcription |
+| [`ggml-base.en-q5_1.bin`](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin?download=true) | 57 MiB | Smaller, faster English model |
+
+`base.en` is the practical default for English media. Use `base` rather than
+`base.en` when the audio is not English. Larger models generally improve
+accuracy but require more memory and take longer.
+
+After downloading a model:
+
+1. Open **Settings** in ClipForge.
+2. Find **Transcripts**.
+3. Select **Choose model**.
+4. Choose the downloaded `ggml-*.bin` file.
+
+The selected path is saved locally by the app. Alternatively, set:
+
+```bash
+export WHISPER_CPP_BIN="$(command -v whisper-cli)"
+export WHISPER_CPP_MODEL="$HOME/Downloads/ggml-base.en.bin"
+```
+
+ClipForge also checks common Homebrew model folders and `$HOME/Downloads`.
+
+## Pinterest Setup
+
+Pinterest boards and pins use `gallery-dl`. The default ClipForge Pinterest
+profile reads Pinterest cookies from Brave Browser on macOS.
+
+1. Install [Brave Browser](https://brave.com/download/).
+2. Sign in to Pinterest in Brave.
+3. Keep **Use working terminal profile** enabled in ClipForge Settings.
+4. Approve the macOS Keychain request for Brave Safe Storage when prompted.
+
+ClipForge does not ask for or store your Pinterest password. Pinterest may rate
+limit large boards; the app uses delays, retries, and a single-download queue.
+
+## Run the App
+
+From this project directory:
 
 ```bash
 npm install
 npm run electron:dev
+```
+
+Other development commands:
+
+```bash
 npm run typecheck
+npm test
 npm run build
 ```
 
-## Required System Tools
+## Troubleshooting
 
-The app calls these tools as subprocesses using `child_process.spawn` with argument arrays:
+### A tool is reported missing
 
-- `yt-dlp`
-- `ffmpeg`
-- `ffprobe`
+Run the tool directly in Terminal. If Terminal cannot find it, ClipForge cannot
+find it either:
 
-They can be installed on the system during development or bundled later for distribution.
+```bash
+command -v yt-dlp
+command -v gallery-dl
+command -v ffmpeg
+command -v ffprobe
+command -v whisper-cli
+```
 
-## YouTube Sign-In / Bot Checks
+Restart ClipForge after installing tools or changing `PATH`.
 
-The app does not use browser cookies or macOS keychain access in the normal flow. For YouTube and YouTube Shorts, Analyze first tries standard yt-dlp, then automatically retries with no-login YouTube extractor compatibility modes. Downloads reuse the strategy that worked during analysis.
+### Transcription cannot start
 
-Some YouTube blocks are account, age, region, or network dependent. Those may still fail without cookies, but the app should not hang or ask for a keychain password.
+- Confirm `whisper-cli --help` works.
+- Confirm the selected file ends in `.bin`.
+- Re-select the model under **Settings > Transcripts**.
+- Use `ggml-base.en.bin` for English or `ggml-base.bin` for multilingual audio.
+- Transcript fallback currently supports single videos, not playlists.
 
-## Command Mapping
+### YouTube reports a sign-in or bot check
 
-- Analyze: `yt-dlp -J --no-playlist "URL"`
-- MP4: `yt-dlp -f "bv*+ba/b" --merge-output-format mp4 -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- MP3: `yt-dlp -x --audio-format mp3 -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- WAV: `yt-dlp -x --audio-format wav -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- M4A: `yt-dlp -x --audio-format m4a -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- WEBM: `yt-dlp -f "bv*+ba/b" --merge-output-format webm -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- English subtitles: `yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*" --sub-format srt -o "OUTPUT_PATH/%(title)s.%(ext)s" "URL"`
-- Timed transcript: uses source captions when available; otherwise uses whisper.cpp for non-YouTube single videos and outputs `.srt` with timestamps.
-- Markdown transcript: uses source captions when available; otherwise uses whisper.cpp for non-YouTube single videos. It converts each video to its own `.md` named like `Title.en.md`, with no timestamps. Lines end with punctuation and are separated by a blank line. Temporary caption files are removed unless the user selected SRT captions or Timed Transcript separately.
-- List subtitles: `yt-dlp --list-subs "URL"`
+Update `yt-dlp`:
 
-Quality choices use the same best-video-plus-audio pattern by default. When a specific height is selected, the app constrains the video selector to that height or lower.
+```bash
+brew upgrade yt-dlp
+```
 
-Playlist-only URLs are analyzed with `yt-dlp -J --flat-playlist`. Downloads use `--yes-playlist` and include `%(playlist_index)03d` in the output filename. Single-video URLs use `--no-playlist` so a video link with a playlist parameter does not accidentally download the whole playlist.
+Some account, age, region, or network restrictions may still require cookies
+or a different network.
 
-## Transcription Roadmap
+### Update the Python downloaders
 
-Existing subtitles/captions are not true transcription. The app prefers source captions, especially for YouTube. When captions are unavailable on platforms like Instagram, whisper.cpp can generate transcript files if `whisper-cli` is installed and a ggml `.bin` model is selected.
-
-The app auto-detects Homebrew whisper.cpp installs in common locations, including `/opt/homebrew/Cellar/whisper-cpp/*/bin/whisper-cli`. You can override the executable with `WHISPER_CPP_BIN` and the model with `WHISPER_CPP_MODEL`.
-
-Future improvements: let users choose model size/language presets, add TXT/VTT exports, and show the transcript inside the app.
+```bash
+pipx upgrade gallery-dl
+pipx upgrade instaloader
+```

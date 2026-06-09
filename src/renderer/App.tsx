@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  BadgeCheck,
   Compass,
   Download,
   Facebook,
@@ -489,17 +488,6 @@ function App() {
               ))}
             </ul>
           </div>
-        </section>
-      )}
-
-      {dependencies.length > 0 && (
-        <section className="dependency-strip">
-          {dependencies.map((dependency) => (
-            <span key={dependency.name} className={!dependency.available && dependency.optional ? 'optional-missing' : ''}>
-              <BadgeCheck size={16} />
-              {dependency.name} {dependency.available ? dependency.version : dependency.optional ? 'optional' : 'missing'}
-            </span>
-          ))}
         </section>
       )}
 
