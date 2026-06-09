@@ -52,6 +52,12 @@ button:disabled {
   margin-bottom: clamp(12px, 2vw, 18px);
 }
 
+.topbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 7px;
   color: #07899b;
@@ -89,6 +95,22 @@ h2 {
   color: #087d91;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 8px 24px rgba(26, 103, 133, 0.1);
+}
+
+.icon-button.selected {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #2563eb, #06a6a6);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .setup-message,
@@ -129,22 +151,23 @@ h2 {
 
 .platform-nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  justify-content: center;
+  gap: 12px;
   margin-bottom: 18px;
+  padding: 4px 0;
 }
 
 .platform-nav button {
-  display: inline-flex;
-  min-height: 46px;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  width: 64px;
+  height: 58px;
+  flex: 0 0 64px;
+  place-items: center;
   border: 1px solid rgba(29, 125, 154, 0.18);
-  border-radius: 13px;
-  padding: 0 14px;
+  border-radius: 16px;
+  padding: 0;
   color: #28516c;
   background: rgba(255, 255, 255, 0.72);
-  font-weight: 760;
   transition: transform 150ms ease, box-shadow 150ms ease, color 150ms ease;
 }
 
@@ -178,6 +201,7 @@ h2 {
 }
 
 .url-panel {
+  margin-bottom: 14px;
   padding: clamp(12px, 2vw, 18px);
 }
 
@@ -888,6 +912,10 @@ dd {
     gap: 8px;
   }
 
+  .topbar-actions {
+    gap: 5px;
+  }
+
   .icon-button {
     width: 36px;
     height: 36px;
@@ -906,20 +934,16 @@ dd {
   }
 
   .platform-nav {
-    flex-wrap: nowrap;
     overflow-x: auto;
+    justify-content: flex-start;
     padding-bottom: 5px;
     scrollbar-width: thin;
   }
 
   .platform-nav button {
-    flex: 0 0 48px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .platform-nav button span {
-    display: none;
+    width: 52px;
+    height: 50px;
+    flex-basis: 52px;
   }
 
   .format-options small,

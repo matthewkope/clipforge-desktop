@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import {
   AlertCircle,
   Compass,
@@ -9,7 +9,6 @@ import {
   Film,
   Images,
   Instagram,
-  Music2,
   Pin,
   RotateCcw,
   Settings,
@@ -40,15 +39,15 @@ import { UrlInput } from './components/UrlInput';
 
 type Section = Platform | 'downloads' | 'settings';
 
-const sections: Array<{ id: Section; label: string; icon: typeof Film }> = [
+type NavIcon = ComponentType<{ size?: number; className?: string }>;
+
+const platformSections: Array<{ id: Platform; label: string; icon: NavIcon }> = [
   { id: 'youtube', label: 'YouTube', icon: Youtube },
   { id: 'instagram', label: 'Instagram', icon: Instagram },
-  { id: 'tiktok', label: 'TikTok', icon: Music2 },
+  { id: 'tiktok', label: 'TikTok', icon: TikTokIcon },
   { id: 'facebook', label: 'Facebook', icon: Facebook },
   { id: 'pinterest', label: 'Pinterest', icon: Pin },
-  { id: 'unknown', label: 'General URL', icon: Compass },
-  { id: 'downloads', label: 'Downloads', icon: Download },
-  { id: 'settings', label: 'Settings', icon: Settings }
+  { id: 'unknown', label: 'General URL', icon: Compass }
 ];
 
 const outputIcons: Record<OutputType, typeof Film> = {
@@ -451,15 +450,35 @@ function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">ClipForge</p>
-          <h1>Social media and yt-dlp downloads in one local app.</h1>
+          <h1>Social Media Downloader</h1>
         </div>
-        <button className="icon-button" onClick={refreshDependencies} title="Recheck dependencies">
-          <RotateCcw size={18} />
-        </button>
+        <div className="topbar-actions">
+          <button
+            className={`icon-button ${activeSection === 'downloads' ? 'selected' : ''}`}
+            onClick={() => setActiveSection('downloads')}
+            title="Downloads"
+            aria-label="Downloads"
+          >
+            <Download size={21} />
+          </button>
+          <button
+            className={`icon-button ${activeSection === 'settings' ? 'selected' : ''}`}
+            onClick={() => setActiveSection('settings')}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings size={21} />
+          </button>
+          <button className="icon-button" onClick={refreshDependencies} title="Recheck dependencies" aria-label="Recheck dependencies">
+            <RotateCcw size={20} />
+          </button>
+        </div>
       </section>
 
-      <nav className="platform-nav">
-        {sections.map((section) => {
+      <UrlInput value={url} onChange={setUrl} onAnalyze={analyze} isAnalyzing={isAnalyzing} />
+
+      <nav className="platform-nav" aria-label="Media platforms">
+        {platformSections.map((section) => {
           const SectionIcon = section.icon;
           return (
             <button
@@ -469,8 +488,8 @@ function App() {
               aria-label={section.label}
               title={section.label}
             >
-              <SectionIcon size={19} strokeWidth={2.2} />
-              <span>{section.label}</span>
+              <SectionIcon size={27} />
+              <span className="visually-hidden">{section.label}</span>
             </button>
           );
         })}
@@ -518,7 +537,6 @@ function App() {
       ) : (
         <section className="workspace">
           <div className="primary-column">
-            <UrlInput value={url} onChange={setUrl} onAnalyze={analyze} isAnalyzing={isAnalyzing} />
             {isVideoDownloadSection ? <PreviewCard media={media} /> : <GalleryPreviewCard media={galleryMedia} />}
             {hasGallery && galleryMedia && galleryMedia.items.length > 1 && (
               <>
@@ -642,6 +660,18 @@ function App() {
         </section>
       )}
     </main>
+  );
+}
+
+function TikTokIcon({ size = 24, className }: { size?: number; className?: string }) {
+  const notePath = 'M14.6 3v10.1a4.4 4.4 0 1 1-3.5-4.3M14.6 3c.4 2.5 1.9 4 4.4 4.5';
+
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d={notePath} transform="translate(-1 0.8)" stroke="#25f4ee" strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={notePath} transform="translate(1 -0.3)" stroke="#fe2c55" strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={notePath} stroke="currentColor" strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -908,7 +938,13 @@ function hasVideoFormats(media: MediaInfo): boolean {
 }
 
 function sectionTitle(section: Section): string {
-  return sections.find((candidate) => candidate.id === section)?.label ?? 'General URL';
+  if (section === 'downloads') {
+    return 'Downloads';
+  }
+  if (section === 'settings') {
+    return 'Settings';
+  }
+  return platformSections.find((candidate) => candidate.id === section)?.label ?? 'General URL';
 }
 
 function parentDirectory(value: string): string {
