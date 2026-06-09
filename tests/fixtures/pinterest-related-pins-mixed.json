@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "1",
+      "board": {
+        "owner": {
+          "username": "matt"
+        },
+        "slug": "ideas"
+      },
+      "images": {
+        "orig": {
+          "url": "https://i.pinimg.com/originals/a.jpg"
+        }
+      }
+    }
+  ],
+  "related": [
+    {
+      "id": "2",
+      "board": {
+        "owner": {
+          "username": "someoneelse"
+        },
+        "slug": "other"
+      },
+      "images": {
+        "orig": {
+          "url": "https://i.pinimg.com/originals/b.jpg"
+        }
+      }
+    }
+  ]
+}
