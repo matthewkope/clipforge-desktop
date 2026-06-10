@@ -1,5 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppApi, CookieSource, DownloadProgress, DownloadRequest, DownloadResult, GalleryDownloadRequest, PinterestSafeModeSettings } from '../shared/media.js';
+import type {
+  AppApi,
+  CookieSource,
+  DownloadProgress,
+  DownloadRequest,
+  DownloadResult,
+  ExtensionBridgeConfig,
+  ExtensionDownloadRequest,
+  GalleryDownloadRequest,
+  MediaThumbnailUpdate,
+  PinterestSafeModeSettings
+} from '../shared/media.js';
 
 const api: AppApi = {
   checkDependencies: () => ipcRenderer.invoke('deps:check'),
@@ -23,6 +34,12 @@ const api: AppApi = {
   resetPinterestArchive: (url: string) => ipcRenderer.invoke('pinterest:reset-archive', url),
   openPath: (path: string) => ipcRenderer.invoke('path:open', path),
   showInFolder: (path: string) => ipcRenderer.invoke('path:show', path),
+  updateExtensionBridgeConfig: (config: ExtensionBridgeConfig) => ipcRenderer.invoke('extension:update-config', config),
+  onExtensionDownloadRequest: (callback: (request: ExtensionDownloadRequest) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: ExtensionDownloadRequest) => callback(request);
+    ipcRenderer.on('extension:download-request', listener);
+    return () => ipcRenderer.removeListener('extension:download-request', listener);
+  },
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: DownloadProgress) => callback(progress);
     ipcRenderer.on('download:progress', listener);
@@ -32,6 +49,11 @@ const api: AppApi = {
     const listener = (_event: Electron.IpcRendererEvent, result: DownloadResult) => callback(result);
     ipcRenderer.on('download:complete', listener);
     return () => ipcRenderer.removeListener('download:complete', listener);
+  },
+  onMediaThumbnail: (callback: (update: MediaThumbnailUpdate) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, update: MediaThumbnailUpdate) => callback(update);
+    ipcRenderer.on('media:thumbnail', listener);
+    return () => ipcRenderer.removeListener('media:thumbnail', listener);
   }
 };
 

@@ -10,7 +10,20 @@ import { detectMediaIntent, detectPlatform } from './urlRouter.js';
 import { readPinterestDebugReport } from './utils/pinterestDebug.js';
 import { pinterestArchivePath, resetPinterestArchive } from './utils/mediaManifest.js';
 import { clearExtractedCookiesCache } from './utils/braveCookieExtractor.js';
-import type { CookieSource, DownloadRequest, DownloadTool, GalleryDownloadRequest, PinterestSafeModeSettings } from '../shared/media.js';
+import {
+  setExtensionBridgeWindow,
+  startExtensionBridge,
+  stopExtensionBridge,
+  updateExtensionBridgeConfig
+} from './extensionBridge.js';
+import type {
+  CookieSource,
+  DownloadRequest,
+  DownloadTool,
+  ExtensionBridgeConfig,
+  GalleryDownloadRequest,
+  PinterestSafeModeSettings
+} from '../shared/media.js';
 
 let mainWindow: BrowserWindow | null = null;
 let pinterestAnalysisRunning = false;
@@ -23,12 +36,21 @@ async function createWindow(): Promise<void> {
     minHeight: 560,
     title: 'ClipForge',
     backgroundColor: '#f6f3ed',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
     }
+  });
+  setExtensionBridgeWindow(mainWindow);
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
+  mainWindow.on('closed', () => {
+    setExtensionBridgeWindow(null);
+    mainWindow = null;
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -42,6 +64,10 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   registerIpcHandlers();
+  // Start the bridge in the background so window creation is not blocked on it.
+  startExtensionBridge().catch((caught) => {
+    console.error('ClipForge extension bridge could not start:', caught);
+  });
   await createWindow();
 
   app.on('activate', () => {
@@ -59,6 +85,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   void clearExtractedCookiesCache();
+  void stopExtensionBridge();
 });
 
 function registerIpcHandlers(): void {
@@ -67,8 +94,12 @@ function registerIpcHandlers(): void {
     platform: detectPlatform(url),
     intent: detectMediaIntent(url)
   }));
-  ipcMain.handle('media:analyze', (_event, url: string, cookieSource?: CookieSource, cookieFilePath?: string) =>
-    analyzeUrl(url, cookieSource, cookieFilePath)
+  ipcMain.handle('media:analyze', (event, url: string, cookieSource?: CookieSource, cookieFilePath?: string) =>
+    analyzeUrl(url, cookieSource, cookieFilePath, (thumbnail) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('media:thumbnail', { url, thumbnail });
+      }
+    })
   );
   ipcMain.handle('media:analyze-normalized', async (_event, url: string, cookieSource?: CookieSource, cookieFilePath?: string, pinterestSettings?: PinterestSafeModeSettings) => {
     if (detectPlatform(url) === 'pinterest') {
@@ -159,6 +190,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('pinterest:reset-archive', (_event, url: string) => resetPinterestArchive(url));
   ipcMain.handle('path:open', (_event, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle('path:show', (_event, targetPath: string) => shell.showItemInFolder(targetPath));
+  ipcMain.handle('extension:update-config', (_event, config: ExtensionBridgeConfig) => {
+    updateExtensionBridgeConfig(config);
+  });
 }
 
 function updateTool(tool: DownloadTool): Promise<string> {

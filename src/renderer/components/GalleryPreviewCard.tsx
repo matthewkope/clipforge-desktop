@@ -5,6 +5,19 @@ interface GalleryPreviewCardProps {
   media: MediaAnalyzerResult | null;
 }
 
+function itemCountLabel(media: MediaAnalyzerResult): string {
+  const photos = media.items.filter((item) => item.type === 'image').length;
+  const videos = media.items.filter((item) => item.type === 'video').length;
+  const parts = [
+    photos > 0 ? `${photos} ${photos === 1 ? 'photo' : 'photos'}` : '',
+    videos > 0 ? `${videos} ${videos === 1 ? 'video' : 'videos'}` : ''
+  ].filter(Boolean);
+  if (parts.length === 0) {
+    return `${media.items.length} ${media.items.length === 1 ? 'item' : 'items'}`;
+  }
+  return parts.join(' · ');
+}
+
 export function GalleryPreviewCard({ media }: GalleryPreviewCardProps) {
   if (!media) {
     return (
@@ -31,7 +44,7 @@ export function GalleryPreviewCard({ media }: GalleryPreviewCardProps) {
           </span>
           <span>
             <Images size={16} />
-            {media.items.length} {media.items.length === 1 ? 'item' : 'items'}
+            {itemCountLabel(media)}
           </span>
         </div>
         <dl>

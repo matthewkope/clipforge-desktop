@@ -35,22 +35,63 @@ export async function analyzeWithPinterest(
 ): Promise<MediaAnalyzerResult> {
   const target = await normalizedPinterestTarget(url);
   const effectiveCookieSource = effectivePinterestCookieSource(cookieSource, cookieFilePath, settings);
-  const resolvedCookieArgs = await resolvePinterestCookieArgs(effectiveCookieSource, cookieFilePath, settings);
-  const args = pinterestModuleArgs([...resolvedCookieArgs, '-J', target.normalizedUrl]);
-  await unlockBravePinterestCookiesIfNeeded(effectiveCookieSource, cookieFilePath, settings);
+  const publicFastPath = shouldTryPublicPinterestAnalysis(target);
+  let args = pinterestModuleArgs(['-J', target.normalizedUrl]);
+  let usedCookies = false;
+
+  if (!publicFastPath) {
+    await unlockBravePinterestCookiesIfNeeded(effectiveCookieSource, cookieFilePath, settings);
+    const resolvedCookieArgs = await resolvePinterestCookieArgs(effectiveCookieSource, cookieFilePath, settings);
+    args = pinterestModuleArgs([...resolvedCookieArgs, '-J', target.normalizedUrl]);
+    usedCookies = resolvedCookieArgs.length > 0;
+  }
+
   await logPinterestDebug('analysis:start', {
     inputUrl: url,
     normalizedUrl: target.normalizedUrl,
     type: target.type,
     args: redactArgs(args),
     equivalentCommand: equivalentPinterestCommand(pinterestPythonExecutable(settings), args),
-    cookieMode: cookieMode(effectiveCookieSource, cookieFilePath),
+    cookieMode: usedCookies ? cookieMode(effectiveCookieSource, cookieFilePath) : 'public',
     safeMode: settings
   });
 
-  const result = await runGalleryDl(args, 90_000, settings);
-  const rawJson = parseGalleryJson(result.stdout);
-  const candidates = pinterestCandidates(rawJson, target);
+  let result: CommandResult;
+  let candidates: PinterestCandidate[];
+  try {
+    result = await runGalleryDl(args, publicFastPath ? 30_000 : 90_000, settings);
+    candidates = pinterestCandidates(parseGalleryJson(result.stdout), target);
+    if (!candidates.some((candidate) => candidate.item)) {
+      throw new Error('No downloadable Pinterest media was detected.');
+    }
+  } catch (publicError) {
+    if (!publicFastPath || effectiveCookieSource === 'none') {
+      throw publicError;
+    }
+
+    await unlockBravePinterestCookiesIfNeeded(effectiveCookieSource, cookieFilePath, settings);
+    const resolvedCookieArgs = await resolvePinterestCookieArgs(effectiveCookieSource, cookieFilePath, settings);
+    if (resolvedCookieArgs.length === 0) {
+      throw publicError;
+    }
+
+    args = pinterestModuleArgs([...resolvedCookieArgs, '-J', target.normalizedUrl]);
+    usedCookies = true;
+    await logPinterestDebug('analysis:cookie-retry', {
+      inputUrl: url,
+      normalizedUrl: target.normalizedUrl,
+      reason: publicError instanceof Error ? publicError.message : String(publicError),
+      args: redactArgs(args),
+      equivalentCommand: equivalentPinterestCommand(pinterestPythonExecutable(settings), args),
+      cookieMode: cookieMode(effectiveCookieSource, cookieFilePath)
+    });
+    result = await runGalleryDl(args, 90_000, settings);
+    candidates = pinterestCandidates(parseGalleryJson(result.stdout), target);
+    if (!candidates.some((candidate) => candidate.item)) {
+      throw new Error('No downloadable Pinterest media was detected.');
+    }
+  }
+
   const parsedItems = candidates.flatMap((candidate) => (candidate.item ? [candidate.item] : []));
   const filteredOutCount = candidates.filter((candidate) => candidate.filteredReason).length;
   const failedParseCount = candidates.filter((candidate) => candidate.failedParse).length;
@@ -101,10 +142,10 @@ export async function analyzeWithPinterest(
     title,
     creator,
     thumbnail,
-    mediaType: target.type === 'pin' ? 'image' : 'board',
+    mediaType: target.type === 'pin' ? (manifestItems[0]?.type === 'video' ? 'video' : 'image') : 'board',
     items: manifestItems,
     availableOutputs: pinterestOptions(target.normalizedUrl),
-    requiresCookies: looksCookieBlocked(result.stderr || result.stdout),
+    requiresCookies: usedCookies || looksCookieBlocked(result.stderr || result.stdout),
     rawTool: 'gallery-dl',
     rawJson: {
       manifestId: manifest.manifestId,
@@ -119,6 +160,10 @@ export async function analyzeWithPinterest(
       failedParseCount
     }
   };
+}
+
+export function shouldTryPublicPinterestAnalysis(target: Pick<PinterestTarget, 'type'>): boolean {
+  return target.type === 'pin';
 }
 
 export async function pinterestFullBoardArgs(

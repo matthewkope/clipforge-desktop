@@ -1,0 +1,291 @@
+.clipforge-clip-button {
+  opacity: 1 !important;
+}
+
+.clipforge-clip-button-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #ffffff;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+
+/* YouTube's redesigned (delhi) player applies `padding: 12px` to every
+   .ytp-button svg; with no explicit size the SVG's content box collapses to
+   0x0 and the icon renders as empty padding. Size it and zero the padding. */
+.clipforge-clip-button-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  padding: 0 !important;
+  box-sizing: border-box;
+}
+
+.clipforge-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  z-index: 70;
+  width: 300px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(16, 26, 31, 0.95);
+  border: 1px solid rgba(11, 153, 166, 0.55);
+  color: #f1f1f1;
+  font-family: 'Roboto', 'YouTube Noto', sans-serif;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.clipforge-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.clipforge-close {
+  border: none;
+  background: none;
+  color: #aaa;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.clipforge-close:hover {
+  color: #fff;
+}
+
+.clipforge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.clipforge-row label {
+  width: 44px;
+  color: #9fc6cc;
+}
+
+.clipforge-row input,
+.clipforge-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(11, 153, 166, 0.5);
+  background: rgba(230, 247, 248, 0.08);
+  color: #fff;
+  font-size: 13px;
+}
+
+.clipforge-row input:focus,
+.clipforge-row select:focus {
+  outline: none;
+  border-color: #0b99a6;
+  box-shadow: 0 0 0 2px rgba(6, 166, 166, 0.25);
+}
+
+.clipforge-row select option {
+  color: #111;
+}
+
+.clipforge-row button,
+.clipforge-actions button {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(11, 153, 166, 0.5);
+  background: rgba(230, 247, 248, 0.1);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.clipforge-row button:hover,
+.clipforge-actions button:hover:not(:disabled) {
+  background: rgba(6, 166, 166, 0.3);
+}
+
+.clipforge-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.clipforge-actions .clipforge-send {
+  flex: 1;
+  background: linear-gradient(135deg, #2563eb, #06a6a6);
+  border: none;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.clipforge-actions .clipforge-send:hover:not(:disabled) {
+  filter: brightness(1.15);
+  background: linear-gradient(135deg, #2563eb, #06a6a6);
+}
+
+.clipforge-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.clipforge-status {
+  min-height: 16px;
+  margin-top: 8px;
+  color: #9fc6cc;
+}
+
+.clipforge-status.error {
+  color: #ff8a80;
+}
+
+.clipforge-status.success {
+  color: #7fe3d4;
+}
+
+.clipforge-bar-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.clipforge-bar-fill {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.45), rgba(6, 166, 166, 0.45));
+  border-top: 1px solid rgba(230, 247, 248, 0.85);
+  border-bottom: 1px solid rgba(230, 247, 248, 0.85);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.clipforge-bar-fill:active {
+  cursor: grabbing;
+}
+
+.clipforge-bar-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.clipforge-bar-handle-grip {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: #ffffff;
+  border: 1px solid #0b99a6;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+}
+
+.clipforge-bar-handle:hover .clipforge-bar-handle-grip {
+  background: #e6f7f8;
+}
+
+/* Caret markers: the start handle carries a caret above the bar (pointing
+   down at it), the end handle a caret below the bar (pointing up). */
+.clipforge-bar-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+}
+
+.clipforge-bar-handle-start::before {
+  top: -5px;
+  border-top: 9px solid #ffffff;
+}
+
+.clipforge-bar-handle-end::before {
+  bottom: -5px;
+  border-bottom: 9px solid #ffffff;
+}
+
+.clipforge-bar-handle:hover::before {
+  filter: drop-shadow(0 0 3px rgba(11, 153, 166, 0.9));
+}
+
+.clipforge-bar-handle-end {
+  z-index: 2;
+}
+
+.clipforge-scrub-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 18, 24, 0.6);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 55;
+}
+
+.clipforge-scrub-preview {
+  position: absolute;
+  width: 180px;
+  transform: translateX(-50%) scale(0.95);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  z-index: 71;
+  border: 2px solid rgba(230, 247, 248, 0.95);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7);
+}
+
+.clipforge-scrub-preview.clipforge-scrub-visible,
+.clipforge-scrub-dim.clipforge-scrub-visible {
+  opacity: 1;
+}
+
+.clipforge-scrub-preview.clipforge-scrub-visible {
+  transform: translateX(-50%) scale(1);
+}
+
+.clipforge-scrub-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.clipforge-scrub-preview-time {
+  text-align: center;
+  font-family: 'Roboto', 'YouTube Noto', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  padding: 4px 0 5px;
+  background: linear-gradient(90deg, #2563eb, #06a6a6);
+}
+
+/* Hide YouTube's own scrub tooltip/preview while a ClipForge handle is being
+   dragged so the two previews do not stack. */
+.clipforge-scrubbing .ytp-tooltip,
+.clipforge-scrubbing .ytp-preview,
+.clipforge-scrubbing .ytp-fine-scrubbing,
+.clipforge-scrubbing .ytp-fine-scrubbing-container {
+  display: none !important;
+}
