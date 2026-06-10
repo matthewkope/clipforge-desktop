@@ -153,14 +153,30 @@ function parseDownloadRequest(value: unknown): ExtensionDownloadRequest {
   if (hasFormat === hasPreset) {
     throw new BridgeRequestError(400, 'Choose one direct format or one saved preset.');
   }
-  if (request.source !== 'active-tab' && request.source !== 'clipboard') {
+  if (request.source !== 'active-tab' && request.source !== 'clipboard' && request.source !== 'youtube-player') {
     throw new BridgeRequestError(400, 'Invalid URL source.');
   }
+  const clip = parseClipRange(request.clipStart, request.clipEnd);
   return {
     url: request.url.trim(),
     ...(hasFormat ? { format: request.format as ExtensionDownloadRequest['format'] } : { presetId: request.presetId }),
-    source: request.source
+    source: request.source,
+    ...(clip ?? {})
   };
+}
+
+function parseClipRange(start: unknown, end: unknown): Pick<ExtensionDownloadRequest, 'clipStart' | 'clipEnd'> | null {
+  if (start === undefined && end === undefined) {
+    return null;
+  }
+  if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new BridgeRequestError(400, 'Clip start and end must both be numbers of seconds.');
+  }
+  const clipStart = Math.max(0, start);
+  if (end <= clipStart) {
+    throw new BridgeRequestError(400, 'Clip end must be after clip start.');
+  }
+  return { clipStart, clipEnd: end };
 }
 
 function isFormatPreset(value: FormatPreset): boolean {

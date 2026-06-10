@@ -96,6 +96,11 @@ export interface QualityOption {
   height?: number;
 }
 
+export interface ClipRange {
+  start: number;
+  end: number;
+}
+
 export interface DownloadRequest {
   url: string;
   outputTypes: OutputType[];
@@ -111,6 +116,7 @@ export interface DownloadRequest {
   extractor?: string;
   whisperModelPath?: string;
   forceOverwrite?: boolean;
+  clipRange?: ClipRange;
 }
 
 export interface MediaItem {
@@ -249,7 +255,9 @@ export interface ExtensionDownloadRequest {
   presetId?: string;
   presetName?: string;
   formats?: OutputType[];
-  source: 'active-tab' | 'clipboard';
+  source: 'active-tab' | 'clipboard' | 'youtube-player';
+  clipStart?: number;
+  clipEnd?: number;
 }
 
 export interface MediaThumbnailUpdate {

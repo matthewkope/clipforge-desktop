@@ -22,17 +22,25 @@ export async function analyzeMedia(
   }
 
   if (platform === 'instagram') {
+    if (intent === 'instagram-video') {
+      return analyzeWithYtDlp(url, cookieSource, cookieFilePath);
+    }
+    // /p/ posts can be a photo, a carousel, or a video. gallery-dl handles all
+    // three; fall back to yt-dlp for video posts it cannot read.
     try {
-      const ytdlp = await analyzeWithYtDlp(url, cookieSource, cookieFilePath);
-      if (ytdlp.mediaType === 'video' || ytdlp.mediaType === 'playlist') {
-        return ytdlp;
+      return await analyzeWithGalleryDl(url, cookieSource, cookieFilePath);
+    } catch (galleryError) {
+      try {
+        // yt-dlp reports photo carousels as empty "playlists"; only a real
+        // video result is a usable fallback here.
+        const ytdlp = await analyzeWithYtDlp(url, cookieSource, cookieFilePath);
+        if (ytdlp.mediaType === 'video') {
+          return ytdlp;
+        }
+      } catch {
+        // Surface the gallery-dl error below; it has the friendlier message.
       }
-      throw new Error('The Instagram section currently supports videos and reels only.');
-    } catch (ytdlpError) {
-      if (intent === 'instagram-video') {
-        throw ytdlpError;
-      }
-      return instagramInstaloaderFallback(url, ytdlpError);
+      throw galleryError;
     }
   }
 
@@ -47,8 +55,18 @@ export async function analyzeMedia(
 
     try {
       return await analyzeWithGalleryDl(url, cookieSource, cookieFilePath);
-    } catch {
-      return analyzeWithYtDlp(url, cookieSource, cookieFilePath);
+    } catch (galleryError) {
+      try {
+        // Like Instagram, only a real video result is a usable yt-dlp
+        // fallback for photo/album links.
+        const ytdlp = await analyzeWithYtDlp(url, cookieSource, cookieFilePath);
+        if (ytdlp.mediaType === 'video') {
+          return ytdlp;
+        }
+      } catch {
+        // Surface the gallery-dl error below; it has the friendlier message.
+      }
+      throw galleryError;
     }
   }
 
@@ -70,41 +88,3 @@ export async function analyzeMedia(
   }
 }
 
-function instagramInstaloaderFallback(url: string, error: unknown): MediaAnalyzerResult {
-  return {
-    platform: 'instagram',
-    intent: detectMediaIntent(url),
-    sourceUrl: url,
-    title: instagramTitle(url),
-    mediaType: 'unknown',
-    items: [
-      {
-        id: '1',
-        index: 1,
-        type: 'unknown',
-        selected: true
-      }
-    ],
-    availableOutputs: [
-      {
-        id: 'instaloader-post',
-        label: 'Try instaloader fallback',
-        type: 'unknown',
-        tool: 'instaloader',
-        commandArgs: ['instaloader', '--dirname-pattern', 'OUTPUT_PATH', url]
-      }
-    ],
-    requiresCookies: true,
-    rawTool: 'instaloader',
-    rawJson: { galleryDlError: error instanceof Error ? error.message : String(error) }
-  };
-}
-
-function instagramTitle(url: string): string {
-  try {
-    const parts = new URL(url).pathname.split('/').filter(Boolean);
-    return parts.at(-1) || 'Instagram media';
-  } catch {
-    return 'Instagram media';
-  }
-}

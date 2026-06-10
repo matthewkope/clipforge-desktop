@@ -29,13 +29,23 @@ export async function analyzeWithGalleryDl(url: string, cookieSource: CookieSour
   const args = [...galleryCookieArgs(cookieSource, cookieFilePath), '-J', url];
   const result = await runGalleryDl(args, 90_000);
   const rawJson = parseGalleryJson(result.stdout);
+  const extractionError = findExtractionError(rawJson);
+  if (extractionError) {
+    throw new GalleryDlError(classifyGalleryDlError(extractionError));
+  }
   const platform = detectPlatform(url);
   const intent = refineIntent(detectMediaIntent(url), rawJson);
   const items = extractItems(rawJson);
   const title = stringValue(findFirst(rawJson, ['title', 'album_title', 'board', 'name', 'description'])) || titleFromUrl(url);
   const creator = stringValue(findFirst(rawJson, ['user', 'username', 'owner', 'author', 'profile', 'account']));
   const description = stringValue(findFirst(rawJson, ['description', 'caption', 'text']));
-  const thumbnail = items.find((item) => item.thumbnail)?.thumbnail || stringValue(findFirst(rawJson, ['thumbnail', 'thumb', 'display_url', 'image']));
+  // Prefer the first item's image so carousels preview with their first photo.
+  const firstItem = items[0];
+  const thumbnail =
+    firstItem?.thumbnail ||
+    (firstItem?.type === 'image' ? firstItem.url : undefined) ||
+    items.find((item) => item.thumbnail)?.thumbnail ||
+    stringValue(findFirst(rawJson, ['thumbnail', 'thumb', 'display_url', 'image']));
   const mediaType = inferMediaType(platform, intent, items);
 
   return {
@@ -135,6 +145,18 @@ function runGalleryDl(args: string[], timeoutMs: number): Promise<CommandResult>
       });
     });
   });
+}
+
+// gallery-dl can exit 0 while reporting extraction failures inline, e.g.
+// [[-1, {"error": "AbortExtraction", "message": "HTTP redirect to login page"}]]
+function findExtractionError(raw: unknown): string | undefined {
+  let found: string | undefined;
+  visitObjects(raw, (object) => {
+    if (!found && object.error !== undefined) {
+      found = stringValue(object.message) || stringValue(object.error) || 'gallery-dl could not extract this link.';
+    }
+  });
+  return found;
 }
 
 function parseGalleryJson(output: string): unknown {

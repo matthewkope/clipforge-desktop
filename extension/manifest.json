@@ -1,10 +1,21 @@
 {
   "manifest_version": 3,
   "name": "ClipForge",
-  "version": "0.1.0",
-  "description": "Send the active tab or a copied media URL to ClipForge as MP4, MP3, or Markdown.",
-  "permissions": ["activeTab", "clipboardRead", "tabs"],
+  "version": "0.2.0",
+  "description": "Send the active tab, a copied media URL, or a YouTube clip selection to ClipForge.",
+  "permissions": ["activeTab", "clipboardRead", "tabs", "storage"],
   "host_permissions": ["http://127.0.0.1:38473/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

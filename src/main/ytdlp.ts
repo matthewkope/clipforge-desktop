@@ -213,6 +213,14 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
     outputTemplate
   ];
 
+  if (request.clipRange && isClipOutputType(outputType)) {
+    args.push(
+      '--download-sections',
+      `*${formatClipSeconds(request.clipRange.start)}-${formatClipSeconds(request.clipRange.end)}`,
+      '--force-keyframes-at-cuts'
+    );
+  }
+
   switch (outputType) {
     case 'mp4':
       args.push('-f', videoFormatSelector(request.qualityId), '--merge-output-format', 'mp4');
@@ -278,7 +286,27 @@ function outputTemplateForRequest(request: DownloadRequest): string {
   }
 
   const snapshotTitle = sanitizeSnapshotFileName(request.mediaTitle ?? '');
-  return path.join(request.outputPath, `${snapshotTitle || '%(title)s'}.%(ext)s`);
+  const clipSuffix = request.clipRange
+    ? ` [clip ${formatClipTimestamp(request.clipRange.start)}-${formatClipTimestamp(request.clipRange.end)}]`
+    : '';
+  return path.join(request.outputPath, `${snapshotTitle || '%(title)s'}${clipSuffix}.%(ext)s`);
+}
+
+function isClipOutputType(outputType: OutputType): boolean {
+  return outputType === 'mp4' || outputType === 'webm' || outputType === 'mp3' || outputType === 'wav' || outputType === 'm4a';
+}
+
+function formatClipSeconds(value: number): string {
+  return (Math.round(value * 1000) / 1000).toString();
+}
+
+function formatClipTimestamp(value: number): string {
+  const total = Math.max(0, Math.floor(value));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const minutesPart = `${hours > 0 ? String(minutes).padStart(2, '0') : minutes}.${String(seconds).padStart(2, '0')}`;
+  return hours > 0 ? `${hours}.${minutesPart}` : minutesPart;
 }
 
 function overwriteArgs(forceOverwrite?: boolean): string[] {

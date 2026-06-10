@@ -4,6 +4,29 @@ ClipForge is an Electron desktop app for downloading video, audio, images,
 captions, and transcripts from supported social-media URLs. It uses local
 command-line tools; media and transcription stay on your computer.
 
+Only download content you own, have rights to, or are permitted to save.
+
+## Features
+
+- **YouTube** — videos, Shorts, and playlists as MP4, WEBM, MP3, WAV, or M4A,
+  with quality selection, subtitles, timed transcripts, and Markdown
+  transcripts (source captions first, whisper.cpp fallback).
+- **YouTube clips** — the browser extension adds a scissor button to the
+  YouTube player. Drag start/end markers directly on the playbar (with a
+  dimmed frame-by-frame preview), fine-tune the times, pick a saved preset,
+  and the desktop app downloads only that section via yt-dlp
+  `--download-sections`.
+- **Instagram** — reels and videos through the standard video workflow;
+  photo posts and carousels analyze into a selectable grid (first photo as
+  the cover, photo/video counts shown) and download via gallery-dl.
+- **TikTok, X/Twitter** — video downloads with the same format controls.
+- **Facebook** — videos via yt-dlp; photos and albums via gallery-dl with
+  the same selectable grid.
+- **Pinterest** — pins, boards, and board sections with rate-limit-aware
+  queueing, hidden download archives, and Brave cookie integration.
+- **Browser extension** — send the active tab, a clipboard URL, or a YouTube
+  clip selection to the app with one click, using saved format presets.
+
 ## Supported Tools
 
 ClipForge expects these commands to be available on `PATH`:
@@ -61,7 +84,19 @@ instaloader --version
 ```
 
 `instaloader` is optional. ClipForge requires `gallery-dl` for photo posts,
-albums, Pinterest boards, and similar gallery content.
+carousels, albums, Pinterest boards, and similar gallery content.
+
+## Instagram and Facebook Photos
+
+Instagram photo posts and carousels, and Facebook photos and albums, are
+analyzed with `gallery-dl` into a selectable media grid: the preview card
+shows the first photo and how many photos/videos the post contains, and you
+can download everything or only the items you check.
+
+Both platforms require a logged-in session for most content. ClipForge
+defaults to reading Brave Browser cookies when no cookie source is configured,
+so sign in to instagram.com / facebook.com in Brave (or pick another cookie
+source / cookies.txt file in **Settings**) before analyzing photo links.
 
 ## Transcription Setup
 
@@ -140,6 +175,14 @@ ClipForge includes an unpacked Chromium extension in
 [`extension`](extension/README.md). It can send the active browser tab or a URL
 from the clipboard to the running desktop app using one of the three saved
 format presets.
+
+On YouTube watch pages and Shorts, the extension also adds a **scissor button
+to the player controls**. Clicking it opens a clip panel: drag the start/end
+markers directly on YouTube's progress bar (the screen dims and a live frame
+preview follows the marker, like native scrubbing), refine the times in the
+panel or grab them from the playhead, preview the range, choose a preset, and
+send it to ClipForge. The app downloads only that section, saved as
+`Title [clip 1.23-2.45].mp4` so it never overwrites a full download.
 
 The extension connects only to `127.0.0.1:38473`. Before using it, keep
 ClipForge open, choose a save folder, and create at least one preset under

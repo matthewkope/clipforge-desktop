@@ -15,6 +15,7 @@ import {
   Youtube
 } from 'lucide-react';
 import type {
+  ClipRange,
   CookieSource,
   DependencyStatus,
   DownloadProgress,
@@ -220,11 +221,11 @@ function App() {
   const captionsAvailable = Boolean(media?.isPlaylist) || sourceCaptionsAvailable;
   const isVideoDownloadSection =
     activeSection === 'youtube' ||
-    activeSection === 'instagram' ||
     activeSection === 'tiktok' ||
     activeSection === 'x' ||
+    (activeSection === 'instagram' && galleryMedia === null) ||
     (activeSection === 'facebook' && media !== null);
-  const hasGallery = Boolean(galleryMedia && activeSection !== 'youtube' && activeSection !== 'instagram' && activeSection !== 'tiktok');
+  const hasGallery = Boolean(galleryMedia && activeSection !== 'youtube' && activeSection !== 'tiktok');
   const canDownloadVideo = Boolean(media && saveFolder && outputTypes.length > 0 && !downloadId && hasTool('yt-dlp', dependencies));
   const canDownloadGallery = Boolean(galleryMedia && saveFolder && !downloadId && hasTool(galleryMedia.rawTool, dependencies));
 
@@ -261,6 +262,12 @@ function App() {
     if (platform === 'pinterest' && pinterestSettings.cookieMode === 'none') {
       return 'none';
     }
+    // Instagram and Facebook require login for most photo/album metadata;
+    // default to Brave cookies (matching the Pinterest approach) when no
+    // cookie source is configured.
+    if ((platform === 'instagram' || platform === 'facebook') && cookieSource === 'none' && !cookieFilePath) {
+      return 'brave';
+    }
     return cookieSource;
   }
 
@@ -296,11 +303,13 @@ function App() {
       }
       setActiveSection(detected.platform === 'unknown' ? 'unknown' : detected.platform);
 
-      if (detected.platform === 'youtube' || detected.platform === 'instagram' || detected.platform === 'tiktok' || detected.platform === 'x') {
+      if (
+        detected.platform === 'youtube' ||
+        detected.platform === 'tiktok' ||
+        detected.platform === 'x' ||
+        (detected.platform === 'instagram' && detected.intent === 'instagram-video')
+      ) {
         const info = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
-        if (detected.platform === 'instagram' && !hasVideoFormats(info)) {
-          throw new Error('The Instagram section is currently focused on videos and reels. Photo posts and carousels are hidden for now.');
-        }
         if (detected.platform === 'tiktok' && !hasVideoFormats(info)) {
           throw new Error('The TikTok section is currently focused on videos.');
         }
@@ -314,6 +323,38 @@ function App() {
         if (autoDownload) {
           await startAnalyzedVideoDownload(info, targetUrl, preferredLanguage);
           return;
+        }
+      } else if (detected.platform === 'instagram') {
+        // Instagram /p/ posts: photos and carousels analyze as a gallery;
+        // video posts fall back to the yt-dlp video workflow.
+        const info = await window.clipForge.analyzeMedia(
+          targetUrl,
+          effectiveCookieSource('instagram'),
+          effectiveCookieFilePath('instagram')
+        );
+        if (currentRunId !== analyzeRunId.current) {
+          return;
+        }
+        if (info.mediaType === 'video' && info.rawTool === 'yt-dlp') {
+          const videoInfo = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
+          if (currentRunId !== analyzeRunId.current) {
+            return;
+          }
+          setMedia(videoInfo);
+          setQualityId('best');
+          const preferredLanguage = preferredSubtitleLanguage(videoInfo);
+          setSubtitleLanguage(preferredLanguage);
+          if (autoDownload) {
+            await startAnalyzedVideoDownload(videoInfo, targetUrl, preferredLanguage);
+            return;
+          }
+        } else {
+          setGalleryMedia(info);
+          setSelectedItems(info.items.map((item) => item.index));
+          if (autoDownload) {
+            await startAnalyzedGalleryDownload(info);
+            return;
+          }
         }
       } else if (detected.platform === 'facebook' && detected.intent === 'facebook-video') {
         // Facebook video URLs: try yt-dlp for full format/quality controls, fall back to gallery-dl
@@ -542,7 +583,8 @@ function App() {
             cookieSource,
             cookieFilePath,
             whisperModelPath,
-            forceOverwrite: true
+            forceOverwrite: true,
+            clipRange: extensionClipRange(request)
           })
         );
         setDownloadId(started.downloadId);
@@ -857,9 +899,11 @@ function App() {
                 <p className="hint">
                   {activeSection === 'facebook'
                     ? 'Facebook photos and albums download via gallery-dl. Paste a video URL to get MP4/MP3/WAV format controls.'
-                    : activeSection === 'pinterest'
-                      ? 'Pinterest pins, boards, and sections use gallery-dl.'
-                      : 'General URLs try yt-dlp first, then gallery-dl.'}
+                    : activeSection === 'instagram'
+                      ? 'Instagram photos and carousels download via gallery-dl. Paste a reel or video URL to get MP4/MP3/WAV format controls.'
+                      : activeSection === 'pinterest'
+                        ? 'Pinterest pins, boards, and sections use gallery-dl.'
+                        : 'General URLs try yt-dlp first, then gallery-dl.'}
                 </p>
               </section>
             )}
@@ -1267,6 +1311,7 @@ function buildVideoDownloadRequest(
     whisperModelPath: string;
     qualityId?: string;
     forceOverwrite?: boolean;
+    clipRange?: ClipRange;
   }
 ): DownloadRequest {
   return {
@@ -1283,8 +1328,28 @@ function buildVideoDownloadRequest(
     isPlaylist: media.isPlaylist,
     extractor: media.extractor,
     whisperModelPath: options.whisperModelPath || undefined,
-    forceOverwrite: options.forceOverwrite
+    forceOverwrite: options.forceOverwrite,
+    clipRange: options.clipRange
   };
+}
+
+function extensionClipRange(request: ExtensionDownloadRequest): ClipRange | undefined {
+  if (typeof request.clipStart === 'number' && typeof request.clipEnd === 'number' && request.clipEnd > request.clipStart) {
+    return { start: request.clipStart, end: request.clipEnd };
+  }
+  return undefined;
+}
+
+function formatClipLabel(range: ClipRange): string {
+  return `clip ${formatPlaybackTime(range.start)}–${formatPlaybackTime(range.end)}`;
+}
+
+function formatPlaybackTime(value: number): string {
+  const total = Math.max(0, Math.floor(value));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, '0');
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`;
 }
 
 function extensionFormatLabel(format: NonNullable<ExtensionDownloadRequest['format']>): string {
@@ -1299,10 +1364,13 @@ function extensionRequestFormats(request: ExtensionDownloadRequest): OutputType[
 }
 
 function extensionRequestLabel(request: ExtensionDownloadRequest): string {
-  if (request.presetName) {
-    return `preset “${request.presetName}”`;
-  }
-  return request.format ? extensionFormatLabel(request.format) : 'selected formats';
+  const base = request.presetName
+    ? `preset “${request.presetName}”`
+    : request.format
+      ? extensionFormatLabel(request.format)
+      : 'selected formats';
+  const clip = extensionClipRange(request);
+  return clip ? `${base} (${formatClipLabel(clip)})` : base;
 }
 
 function sameOutputTypes(current: OutputType[], expected: OutputType[]): boolean {
