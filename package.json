@@ -9,13 +9,12 @@
     "electron:dev": "npm run build:main && concurrently -k \"npm run dev\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "npm run build:main && vite build",
     "build:main": "tsc -p tsconfig.main.json",
+    "build:extension-icons": "node scripts/generate-extension-icons.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run build:main && node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^5.0.4",
-    "electron": "^39.2.6",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
@@ -24,8 +23,10 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
+    "electron": "^39.2.6",
     "typescript": "^5.7.2",
     "vite": "^7.2.4",
     "wait-on": "^8.0.1"

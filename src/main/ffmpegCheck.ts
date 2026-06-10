@@ -53,18 +53,22 @@ function runVersion(command: string, args: string[], optional = false): Promise<
 }
 
 export async function checkDependencies(): Promise<DependencyStatus[]> {
-  const base = await Promise.all(checks.map((check) => runVersion(check.name, check.args, check.optional)));
-  const galleryDl = await checkGalleryDl();
+  const [base, galleryDl] = await Promise.all([
+    Promise.all(checks.map((check) => runVersion(check.name, check.args, check.optional))),
+    checkGalleryDl()
+  ]);
   return [base[0], galleryDl, ...base.slice(1)];
 }
 
 async function checkGalleryDl(): Promise<DependencyStatus> {
+  // Probe the executable and the python module in parallel; prefer the executable.
+  const pythonModulePromise = runVersion('python', ['-m', 'gallery_dl', '--version']);
   const executable = await runVersion('gallery-dl', ['--version']);
   if (executable.available) {
     return executable;
   }
 
-  const pythonModule = await runVersion('python', ['-m', 'gallery_dl', '--version']);
+  const pythonModule = await pythonModulePromise;
   if (pythonModule.available) {
     return {
       name: 'gallery-dl',

@@ -68,7 +68,7 @@ function itemsFromInfo(info: MediaInfo): MediaItem[] {
 
 function ytdlpOptions(platform: Platform, mediaType: NormalizedMediaType, url: string): DownloadOption[] {
   const options: DownloadOption[] = [];
-  if (mediaType === 'video' || mediaType === 'playlist' || platform === 'youtube' || platform === 'instagram' || platform === 'tiktok' || platform === 'facebook') {
+  if (mediaType === 'video' || mediaType === 'playlist' || platform === 'youtube' || platform === 'instagram' || platform === 'tiktok' || platform === 'facebook' || platform === 'x') {
     options.push({
       id: 'mp4',
       label: 'MP4 Video',

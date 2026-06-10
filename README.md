@@ -134,6 +134,17 @@ npm test
 npm run build
 ```
 
+## Browser Extension
+
+ClipForge includes an unpacked Chromium extension in
+[`extension`](extension/README.md). It can send the active browser tab or a URL
+from the clipboard to the running desktop app using one of the three saved
+format presets.
+
+The extension connects only to `127.0.0.1:38473`. Before using it, keep
+ClipForge open, choose a save folder, and create at least one preset under
+**Formats > Presets**.
+
 ## Troubleshooting
 
 ### A tool is reported missing

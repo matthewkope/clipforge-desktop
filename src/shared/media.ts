@@ -1,7 +1,7 @@
 export type OutputType = 'mp4' | 'mp3' | 'wav' | 'm4a' | 'webm' | 'subtitles' | 'markdown' | 'timed-transcript';
 export type CookieSource = 'none' | 'chrome' | 'safari' | 'firefox' | 'edge' | 'brave';
 export type YtDlpStrategy = 'standard' | 'youtube-default-no-web' | 'youtube-tv' | 'youtube-mobile';
-export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'unknown';
+export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'x' | 'unknown';
 export type MediaIntent =
   | 'instagram-image'
   | 'instagram-video'
@@ -13,6 +13,7 @@ export type MediaIntent =
   | 'pinterest-pin'
   | 'pinterest-board'
   | 'pinterest-section'
+  | 'x-video'
   | 'youtube-video'
   | 'youtube-shorts'
   | 'youtube-playlist'
@@ -109,6 +110,7 @@ export interface DownloadRequest {
   isPlaylist?: boolean;
   extractor?: string;
   whisperModelPath?: string;
+  forceOverwrite?: boolean;
 }
 
 export interface MediaItem {
@@ -224,6 +226,37 @@ export interface DownloadResult {
   error?: string;
 }
 
+export interface FormatPreset {
+  id: string;
+  name: string;
+  formats: OutputType[];
+}
+
+export interface ExtensionBridgeConfig {
+  presets: FormatPreset[];
+  saveFolder: string;
+  downloadActive: boolean;
+  subtitleLanguage: string;
+  whisperModelPath: string;
+  cookieSource: CookieSource;
+  cookieFilePath?: string;
+  pinterestSettings: PinterestSafeModeSettings;
+}
+
+export interface ExtensionDownloadRequest {
+  url: string;
+  format?: 'mp4' | 'mp3' | 'markdown';
+  presetId?: string;
+  presetName?: string;
+  formats?: OutputType[];
+  source: 'active-tab' | 'clipboard';
+}
+
+export interface MediaThumbnailUpdate {
+  url: string;
+  thumbnail: string;
+}
+
 export interface AppApi {
   checkDependencies: () => Promise<DependencyStatus[]>;
   detectPlatform: (url: string) => Promise<{ platform: Platform; intent: MediaIntent }>;
@@ -244,6 +277,9 @@ export interface AppApi {
   resetPinterestArchive: (url: string) => Promise<string>;
   openPath: (path: string) => Promise<void>;
   showInFolder: (path: string) => Promise<void>;
+  updateExtensionBridgeConfig: (config: ExtensionBridgeConfig) => Promise<void>;
+  onExtensionDownloadRequest: (callback: (request: ExtensionDownloadRequest) => void) => () => void;
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void;
   onDownloadComplete: (callback: (result: DownloadResult) => void) => () => void;
+  onMediaThumbnail: (callback: (update: MediaThumbnailUpdate) => void) => () => void;
 }

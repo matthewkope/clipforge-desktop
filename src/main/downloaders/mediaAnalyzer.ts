@@ -17,7 +17,7 @@ export async function analyzeMedia(
     return analyzeWithYtDlp(url, cookieSource, cookieFilePath);
   }
 
-  if (platform === 'tiktok') {
+  if (platform === 'tiktok' || platform === 'x') {
     return analyzeWithYtDlp(url, cookieSource, cookieFilePath);
   }
 

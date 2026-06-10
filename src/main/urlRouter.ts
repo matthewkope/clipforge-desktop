@@ -18,6 +18,9 @@ export function detectPlatform(input: string): Platform {
     if (hostname === 'pinterest.com' || hostname.endsWith('.pinterest.com') || hostname === 'pin.it') {
       return 'pinterest';
     }
+    if (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) {
+      return 'x';
+    }
   } catch {
     return 'unknown';
   }
@@ -80,6 +83,8 @@ export function detectMediaIntent(input: string): MediaIntent {
         return path.split('/').filter(Boolean).length >= 3 ? 'pinterest-section' : 'pinterest-board';
       }
       return 'unknown';
+    case 'x':
+      return 'x-video';
     case 'unknown':
       return 'unknown';
   }

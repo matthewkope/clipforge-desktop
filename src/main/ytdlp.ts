@@ -32,7 +32,12 @@ export function validateUrl(input: string): void {
   }
 }
 
-export async function analyzeUrl(url: string, cookieSource: CookieSource = 'none', cookieFilePath?: string): Promise<MediaInfo> {
+export async function analyzeUrl(
+  url: string,
+  cookieSource: CookieSource = 'none',
+  cookieFilePath?: string,
+  onOpeningFrame?: (thumbnail: string) => void
+): Promise<MediaInfo> {
   validateUrl(url);
   const playlistMode = isPlaylistOnlyUrl(url);
   const analyzeArgs = playlistMode ? ['-J', '--flat-playlist', url] : ['-J', '--no-playlist', url];
@@ -58,41 +63,48 @@ export async function analyzeUrl(url: string, cookieSource: CookieSource = 'none
     strategy = analyzed.strategy;
   }
 
+  let parsed: MediaInfo;
   try {
-    const parsed = JSON.parse(result.stdout) as MediaInfo;
-    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
-    const isPlaylist = parsed._type === 'playlist' || entries.length > 0 || playlistMode;
-    const firstEntry = entries.find((entry) => entry.thumbnail || entry.thumbnails?.length || entry.title);
-    const firstEntryDetails = isPlaylist ? await fetchFirstPlaylistEntryDetails(url, firstEntry, strategy) : null;
-    const metadataThumbnail = isPlaylist
-      ? firstEntryDetails?.thumbnail || bestThumbnail(firstEntryDetails?.thumbnails) || firstEntry?.thumbnail || bestThumbnail(firstEntry?.thumbnails) || parsed.thumbnail
-      : preferredPreviewThumbnail(parsed);
-    const thumbnail =
-      !isPlaylist && isOpeningFramePlatform(parsed.webpage_url || url, parsed.extractor)
-        ? (await extractOpeningFrameThumbnail(url, cookieSource, cookieFilePath, strategy)) || metadataThumbnail
-        : metadataThumbnail;
-
-    return {
-      ...parsed,
-      formats: Array.isArray(parsed.formats) ? parsed.formats : [],
-      subtitles: parsed.subtitles ?? {},
-      automatic_captions: parsed.automatic_captions ?? {},
-      ytDlpStrategy: strategy,
-      isPlaylist,
-      entries,
-      playlist_count: parsed.playlist_count ?? entries.length,
-      thumbnail
-    };
+    parsed = JSON.parse(result.stdout) as MediaInfo;
   } catch {
     throw new YtDlpError('yt-dlp returned metadata that could not be read.');
   }
+
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  const isPlaylist = parsed._type === 'playlist' || entries.length > 0 || playlistMode;
+  const firstEntry = entries.find((entry) => entry.thumbnail || entry.thumbnails?.length || entry.title);
+  const firstEntryDetails = isPlaylist ? await fetchFirstPlaylistEntryDetails(url, firstEntry, strategy) : null;
+  const thumbnail = isPlaylist
+    ? firstEntryDetails?.thumbnail || bestThumbnail(firstEntryDetails?.thumbnails) || firstEntry?.thumbnail || bestThumbnail(firstEntry?.thumbnails) || parsed.thumbnail
+    : preferredPreviewThumbnail(parsed);
+
+  // Upgrade Instagram/TikTok previews to a real opening frame in the background
+  // so analysis results render immediately instead of waiting on a partial
+  // video download plus an ffmpeg frame grab.
+  if (!isPlaylist && isOpeningFramePlatform(parsed.webpage_url || url, parsed.extractor) && onOpeningFrame) {
+    void extractOpeningFrameThumbnail(url, cookieSource, cookieFilePath, strategy)
+      .then((frame) => {
+        if (frame) {
+          onOpeningFrame(frame);
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  return {
+    ...parsed,
+    formats: Array.isArray(parsed.formats) ? parsed.formats : [],
+    subtitles: parsed.subtitles ?? {},
+    automatic_captions: parsed.automatic_captions ?? {},
+    ytDlpStrategy: strategy,
+    isPlaylist,
+    entries,
+    playlist_count: parsed.playlist_count ?? entries.length,
+    thumbnail
+  };
 }
 
 function preferredPreviewThumbnail(info: MediaInfo): string | undefined {
-  if (isOpeningFramePlatform(info.webpage_url, info.extractor)) {
-    return info.thumbnail || bestThumbnail(info.thumbnails);
-  }
-
   return info.thumbnail || bestThumbnail(info.thumbnails);
 }
 
@@ -194,6 +206,7 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
   const args = [
     ...strategyArgs(request.ytDlpStrategy ?? automaticStrategyForUrl(request.url)),
     ...cookieArgs(request.cookieSource, request.cookieFilePath),
+    ...overwriteArgs(request.forceOverwrite),
     request.isPlaylist ? '--yes-playlist' : '--no-playlist',
     '--newline',
     '-o',
@@ -245,6 +258,7 @@ export function buildWhisperAudioArgs(request: DownloadRequest): string[] {
   return [
     ...strategyArgs(request.ytDlpStrategy ?? automaticStrategyForUrl(request.url)),
     ...cookieArgs(request.cookieSource, request.cookieFilePath),
+    ...overwriteArgs(request.forceOverwrite),
     '--no-playlist',
     '--newline',
     '-x',
@@ -265,6 +279,10 @@ function outputTemplateForRequest(request: DownloadRequest): string {
 
   const snapshotTitle = sanitizeSnapshotFileName(request.mediaTitle ?? '');
   return path.join(request.outputPath, `${snapshotTitle || '%(title)s'}.%(ext)s`);
+}
+
+function overwriteArgs(forceOverwrite?: boolean): string[] {
+  return forceOverwrite ? ['--force-overwrites', '--no-continue'] : [];
 }
 
 function sanitizeSnapshotFileName(value: string): string {

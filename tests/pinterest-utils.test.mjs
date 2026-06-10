@@ -4,7 +4,8 @@ import { dedupeMediaItems } from '../dist/main/utils/dedupeMediaItems.js';
 import { extractPinterestPinId, normalizeMediaUrl, normalizePinterestUrl } from '../dist/main/utils/pinterestNormalize.js';
 import { buildRange } from '../dist/main/utils/rangeBuilder.js';
 import { detectMediaIntent, detectPlatform } from '../dist/main/urlRouter.js';
-import { isPinterestPinObject } from '../dist/main/downloaders/pinterestAdapter.js';
+import { isPinterestPinObject, shouldTryPublicPinterestAnalysis } from '../dist/main/downloaders/pinterestAdapter.js';
+import { buildDownloadArgs } from '../dist/main/ytdlp.js';
 
 test('detects Pinterest board and pin URLs', () => {
   assert.equal(detectPlatform('https://www.pinterest.com/matt/ideas/'), 'pinterest');
@@ -16,6 +17,26 @@ test('detects TikTok video URLs', () => {
   assert.equal(detectPlatform('https://www.tiktok.com/@clipforge/video/1234567890'), 'tiktok');
   assert.equal(detectPlatform('https://vm.tiktok.com/ZMexample/'), 'tiktok');
   assert.equal(detectMediaIntent('https://www.tiktok.com/@clipforge/video/1234567890'), 'tiktok-video');
+});
+
+test('detects X and Twitter video URLs', () => {
+  assert.equal(detectPlatform('https://x.com/clipforge/status/1234567890'), 'x');
+  assert.equal(detectPlatform('https://twitter.com/clipforge/status/1234567890'), 'x');
+  assert.equal(detectMediaIntent('https://x.com/clipforge/status/1234567890'), 'x-video');
+});
+
+test('extension downloads can force a fresh output for the same URL', () => {
+  const args = buildDownloadArgs(
+    {
+      url: 'https://www.youtube.com/watch?v=example',
+      outputTypes: ['mp3'],
+      outputPath: '/tmp',
+      forceOverwrite: true
+    },
+    'mp3'
+  );
+  assert.equal(args.includes('--force-overwrites'), true);
+  assert.equal(args.includes('--no-continue'), true);
 });
 
 test('normalizes Pinterest board URLs without tracking params', () => {
@@ -35,6 +56,12 @@ test('preserves Pinterest section URLs', () => {
 test('extracts pin IDs', () => {
   assert.equal(extractPinterestPinId('https://www.pinterest.com/pin/987654321/'), '987654321');
   assert.equal(extractPinterestPinId('pin 1234567890 media'), '1234567890');
+});
+
+test('uses the public fast path for individual Pinterest pins only', () => {
+  assert.equal(shouldTryPublicPinterestAnalysis({ type: 'pin' }), true);
+  assert.equal(shouldTryPublicPinterestAnalysis({ type: 'board' }), false);
+  assert.equal(shouldTryPublicPinterestAnalysis({ type: 'section' }), false);
 });
 
 test('dedupes by pin ID and normalized media URL', () => {
