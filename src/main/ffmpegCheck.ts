@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process';
 import type { DependencyStatus } from '../shared/media.js';
+import { resolveToolPath, type ManagedTool } from './toolResolver.js';
+
+const managedToolNames: ManagedTool[] = ['yt-dlp', 'gallery-dl', 'ffmpeg', 'ffprobe', 'instaloader'];
+
+// Probe the bundled/managed binary when there is one, otherwise the bare name
+// (which the OS resolves on PATH). Keeps the dependency check honest about the
+// binary the app will actually run.
+function executableFor(name: string): string {
+  return (managedToolNames as string[]).includes(name) ? resolveToolPath(name as ManagedTool) : name;
+}
 
 const checks = [
   { name: 'yt-dlp' as const, args: ['--version'] },
@@ -10,7 +20,7 @@ const checks = [
 
 function runVersion(command: string, args: string[], optional = false): Promise<DependencyStatus> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { shell: false });
+    const child = spawn(executableFor(command), args, { shell: false });
     let output = '';
     let errorOutput = '';
 

@@ -14,6 +14,7 @@ import {
 import { clearHistory, listHistory, removeHistoryEntry } from './historyStore.js';
 import { getDownloadCover } from './coverImage.js';
 import { isSafeOpenTarget } from './utils/pathSafety.js';
+import { autoUpdateYtDlp, provisionCoreTools } from './binaryManager.js';
 import {
   addWatchSubscription,
   listWatchSubscriptions,
@@ -161,6 +162,11 @@ app.whenReady().then(async () => {
     console.error('ClipForge extension bridge could not start:', caught);
   });
   await createWindow();
+  // Provision the core download tools (promote the bundled yt-dlp into a
+  // writable managed copy on first run), then refresh it if a newer release
+  // exists. Best-effort and fully in the background — the resolver falls back to
+  // the bundled binary while this runs, so it never blocks the window.
+  void provisionCoreTools().then(() => autoUpdateYtDlp());
   void notifyYtDlpUpdateAvailable();
   startWatchScheduler();
 

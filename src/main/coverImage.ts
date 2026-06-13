@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { nativeImage } from 'electron';
 import { isKnownDownloadFile } from './utils/pathSafety.js';
+import { resolveToolPath } from './toolResolver.js';
 
 // Generates a small cover thumbnail (data URI) from a downloaded file so the
 // Downloads history can show real previews. Images are decoded/resized with
@@ -58,7 +59,7 @@ function videoCover(filePath: string): Promise<string | null> {
   return new Promise((resolve) => {
     // Grab one frame ~1s in and stream a JPEG to stdout; keep it small.
     const child = spawn(
-      'ffmpeg',
+      resolveToolPath('ffmpeg'),
       ['-hide_banner', '-loglevel', 'error', '-ss', '1', '-i', filePath, '-frames:v', '1', '-vf', `scale=-1:${coverHeight}`, '-f', 'image2', 'pipe:1'],
       { shell: false, stdio: ['ignore', 'pipe', 'ignore'] }
     );

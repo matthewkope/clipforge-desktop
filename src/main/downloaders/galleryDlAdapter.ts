@@ -12,6 +12,7 @@ import type {
 } from '../../shared/media.js';
 import { detectMediaIntent, detectPlatform } from '../urlRouter.js';
 import { buildRange } from '../utils/rangeBuilder.js';
+import { resolveToolPath } from '../toolResolver.js';
 
 interface CommandResult {
   stdout: string;
@@ -103,7 +104,7 @@ function galleryCookieArgs(cookieSource: CookieSource = 'none', cookieFilePath?:
 
 function runGalleryDl(args: string[], timeoutMs: number): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('gallery-dl', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveToolPath('gallery-dl'), args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;

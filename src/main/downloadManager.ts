@@ -30,6 +30,7 @@ import { logPinterestDebug } from './utils/pinterestDebug.js';
 import { convertVideoToGif, postprocessClip } from './clipPostprocess.js';
 import { recordHistoryEntry, updateHistoryEntry } from './historyStore.js';
 import { broadcast } from './utils/broadcast.js';
+import { resolveToolPath } from './toolResolver.js';
 import { runWhisperCpp } from './utils/whisper.js';
 
 interface ActiveDownload {
@@ -407,10 +408,10 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
     request.platform === 'pinterest'
       ? pinterestPythonExecutable(request.pinterestSettings)
       : request.tool === 'instaloader'
-        ? 'instaloader'
+        ? resolveToolPath('instaloader')
         : request.tool === 'yt-dlp'
-          ? 'yt-dlp'
-          : 'gallery-dl';
+          ? resolveToolPath('yt-dlp')
+          : resolveToolPath('gallery-dl');
   const args = await galleryCommandArgs(request);
   if (request.platform === 'pinterest') {
     await logPinterestDebug('download:full:start', {
@@ -653,7 +654,7 @@ function runSingleDownload(
   }
 
   const args = buildDownloadArgs(request, outputType);
-  const child = spawn('yt-dlp', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(resolveToolPath('yt-dlp'), args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
   let combinedOutput = '';
   let lastFilename = '';
   const savedPaths: string[] = [];
@@ -824,7 +825,7 @@ function runAudioExtraction(
   }
 
   const args = buildWhisperAudioArgs(request);
-  const child = spawn('yt-dlp', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(resolveToolPath('yt-dlp'), args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
   let combinedOutput = '';
   let lastFilename = '';
 

@@ -169,6 +169,47 @@ npm test
 npm run build
 ```
 
+## Building & Distributing
+
+ClipForge ships the tools it needs so end users don't have to install anything.
+`scripts/fetch-binaries.mjs` assembles **yt-dlp**, **ffmpeg**, and **ffprobe**
+into `resources/bin/` for the current platform (yt-dlp from its GitHub release;
+ffmpeg/ffprobe from the `ffmpeg-static`/`ffprobe-static` dev dependencies), and
+electron-builder bundles them with the app. At runtime `toolResolver.ts` prefers,
+in order: an env override → an auto-updated copy in `userData/bin` → the bundled
+copy → whatever is on `PATH`. So a packaged build is self-contained, while a dev
+checkout keeps using your Homebrew tools. yt-dlp is refreshed automatically on
+launch so site breakages self-heal.
+
+> gallery-dl is **not** bundled (its releases ship no standalone binary). It is
+> optional — only needed for photo galleries — and can be installed with
+> `pipx install gallery-dl` or `brew install gallery-dl`.
+
+Build commands:
+
+```bash
+npm run pack    # unpacked app in release/ (no installer) — quick local test
+npm run dist    # full installers (.dmg/.zip on macOS, NSIS on Windows, AppImage on Linux)
+```
+
+### Code signing & notarization (required for macOS distribution)
+
+Without signing + notarization, macOS Gatekeeper blocks the download for most
+users ("ClipForge is damaged / from an unidentified developer"). To produce a
+distributable macOS build, set these environment variables before `npm run dist`
+(they are read automatically by electron-builder), and flip `mac.notarize` to
+`true` in `electron-builder.yml`:
+
+```bash
+export CSC_LINK=/path/to/DeveloperIDApplication.p12   # your Developer ID cert
+export CSC_KEY_PASSWORD=...                            # cert password
+export APPLE_ID=you@example.com
+export APPLE_APP_SPECIFIC_PASSWORD=...                 # app-specific password
+export APPLE_TEAM_ID=XXXXXXXXXX
+```
+
+A free unsigned `npm run pack` is fine for testing on your own machine.
+
 ## Browser Extension
 
 ClipForge includes an unpacked Chromium extension in

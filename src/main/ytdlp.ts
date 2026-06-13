@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ClipRange, CookieSource, DownloadRequest, MediaInfo, OutputType, PlaylistEntry, YtDlpStrategy } from '../shared/media.js';
+import { resolveToolPath } from './toolResolver.js';
 
 interface YtDlpRunResult {
   stdout: string;
@@ -160,7 +161,7 @@ async function extractOpeningFrameThumbnail(
       return undefined;
     }
 
-    await runCommand('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', mediaPath, '-frames:v', '1', '-q:v', '3', framePath], 20_000);
+    await runCommand(resolveToolPath('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', mediaPath, '-frames:v', '1', '-q:v', '3', framePath], 20_000);
     const frame = await readFile(framePath);
     return `data:image/jpeg;base64,${frame.toString('base64')}`;
   } catch {
@@ -607,7 +608,7 @@ function videoFormatSelector(qualityId?: string): string {
 }
 
 function runYtDlp(args: string[], timeoutMs = 0): Promise<{ stdout: string; stderr: string }> {
-  return runCommand('yt-dlp', args, timeoutMs);
+  return runCommand(resolveToolPath('yt-dlp'), args, timeoutMs);
 }
 
 function runCommand(command: string, args: string[], timeoutMs = 0): Promise<{ stdout: string; stderr: string }> {

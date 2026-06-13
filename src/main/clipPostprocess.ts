@@ -6,6 +6,7 @@ import type { CaptionStyle, DownloadRequest } from '../shared/media.js';
 import { buildSubtitleFetchArgs, buildWhisperAudioArgs } from './ytdlp.js';
 import { clipShiftCues, parseTimedCues, serializeSrt } from './utils/srt.js';
 import { runWhisperCpp } from './utils/whisper.js';
+import { resolveToolPath } from './toolResolver.js';
 
 interface PostprocessOptions {
   request: DownloadRequest;
@@ -95,7 +96,7 @@ async function fetchClipSubtitle(request: DownloadRequest, tempDir: string): Pro
     const args = buildSubtitleFetchArgs(subtitleRequest, path.join(tempDir, 'captions.%(ext)s'));
     // Tolerate a failed exit (e.g. rate limit on a later language variant) as
     // long as some subtitle file was written first.
-    await runCommand('yt-dlp', args, 120_000).catch(() => undefined);
+    await runCommand(resolveToolPath('yt-dlp'), args, 120_000).catch(() => undefined);
     const files = await readdir(tempDir);
     const subtitleFile = files
       .filter((file) => /\.(?:srt|vtt)$/i.test(file))
@@ -131,7 +132,7 @@ async function whisperClipSubtitle(request: DownloadRequest, tempDir: string): P
     outputTemplate: undefined
   };
   const args = buildWhisperAudioArgs(audioRequest, request.clipRange);
-  await runCommand('yt-dlp', args, 600_000);
+  await runCommand(resolveToolPath('yt-dlp'), args, 600_000);
   const files = await readdir(tempDir);
   const audioFile = files.find((file) => /\.wav$/i.test(file));
   if (!audioFile) {
@@ -195,7 +196,7 @@ function escapeFilterPath(filePath: string): string {
 }
 
 function runFfmpeg(args: string[]): Promise<void> {
-  return runCommand('ffmpeg', args, 600_000).then(() => undefined);
+  return runCommand(resolveToolPath('ffmpeg'), args, 600_000).then(() => undefined);
 }
 
 function runCommand(command: string, args: string[], timeoutMs: number): Promise<string> {

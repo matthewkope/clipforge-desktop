@@ -41,6 +41,7 @@ import type {
 } from '../shared/media';
 import { CookieSourceSelector } from './components/CookieSourceSelector';
 import { DownloadsPanel } from './components/DownloadsPanel';
+import { PlatformBadges } from './components/PlatformBadges';
 import { WatchPanel } from './components/WatchPanel';
 import { FormatSelector } from './components/FormatSelector';
 import { GalleryPreviewCard } from './components/GalleryPreviewCard';
@@ -943,16 +944,18 @@ function App() {
         <div className="brand-heading">
           <div className="brand-line">
             <p className="eyebrow">ClipForge</p>
-            <div className="supported-platforms" aria-label="Supported social media platforms">
-              <span className="brand-youtube" title="YouTube"><Youtube size={12} /></span>
-              <span className="brand-instagram" title="Instagram"><Instagram size={12} /></span>
-              <span className="brand-tiktok" title="TikTok"><TikTokIcon size={12} /></span>
-              <span className="brand-facebook" title="Facebook"><Facebook size={12} /></span>
-              <span className="brand-pinterest" title="Pinterest"><PinterestIcon size={12} /></span>
-              <span className="brand-x" title="X / Twitter"><XIcon size={11} /></span>
-              <span className="brand-reddit" title="Reddit"><RedditIcon size={12} /></span>
-              <span className="brand-twitch" title="Twitch"><Twitch size={12} /></span>
-            </div>
+            <PlatformBadges
+              platforms={[
+                { id: 'youtube', label: 'YouTube', icon: Youtube },
+                { id: 'instagram', label: 'Instagram', icon: Instagram },
+                { id: 'tiktok', label: 'TikTok', icon: TikTokIcon },
+                { id: 'facebook', label: 'Facebook', icon: Facebook },
+                { id: 'pinterest', label: 'Pinterest', icon: PinterestIcon },
+                { id: 'x', label: 'X / Twitter', icon: XIcon },
+                { id: 'reddit', label: 'Reddit', icon: RedditIcon },
+                { id: 'twitch', label: 'Twitch', icon: Twitch }
+              ]}
+            />
           </div>
           <h1>
             <button

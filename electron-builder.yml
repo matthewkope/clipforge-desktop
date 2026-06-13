@@ -1,0 +1,45 @@
+appId: com.clipforge.desktop
+productName: ClipForge
+copyright: Copyright © 2026 ClipForge
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled app needs to ship; source/tests/extension are excluded.
+files:
+  - dist/**/*
+  - package.json
+
+# Bundled command-line tools (yt-dlp, ffmpeg, ffprobe) assembled by
+# scripts/fetch-binaries.mjs. extraResources land in <app>/Contents/Resources/bin
+# (process.resourcesPath/bin), which toolResolver.ts looks for first.
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - "**/*"
+
+asar: true
+
+mac:
+  category: public.app-category.utilities
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - dmg
+    - zip
+  # Notarization runs automatically when APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD,
+  # and APPLE_TEAM_ID are set in the environment (see README distribution notes).
+  notarize: false
+
+win:
+  target:
+    - nsis
+
+linux:
+  category: AudioVideo
+  target:
+    - AppImage

@@ -6,6 +6,7 @@ import { app, Notification } from 'electron';
 import type { WatchOutputType, WatchSubscription, WatchSubscriptionInput } from '../shared/media.js';
 import { recordHistoryEntry, removeHistoryEntry, updateHistoryEntry } from './historyStore.js';
 import { broadcast } from './utils/broadcast.js';
+import { resolveToolPath } from './toolResolver.js';
 
 // Watch folders: "download anything new from this channel/playlist/profile
 // into this folder." Each subscription keeps a hidden yt-dlp download archive
@@ -259,7 +260,7 @@ function buildSyncArgs(subscription: WatchSubscription, archivePath: string, fir
 
 function runYtDlpSync(args: string[]): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn('yt-dlp', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveToolPath('yt-dlp'), args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     const savedPaths: string[] = [];
 

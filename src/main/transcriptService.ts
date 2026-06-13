@@ -6,6 +6,7 @@ import type { CookieSource, TranscriptSegment } from '../shared/media.js';
 import { buildSubtitleFetchArgs, buildWhisperAudioArgs } from './ytdlp.js';
 import { parseTimedCues } from './utils/srt.js';
 import { runWhisperCpp } from './utils/whisper.js';
+import { resolveToolPath } from './toolResolver.js';
 
 interface TranscriptCacheEntry {
   segments: TranscriptSegment[];
@@ -142,7 +143,7 @@ async function whisperTranscript(
 
 function runYtDlp(args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('yt-dlp', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveToolPath('yt-dlp'), args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     let settled = false;
     const timeout = setTimeout(() => {

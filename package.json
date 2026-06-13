@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "A desktop GUI wrapper for yt-dlp downloads.",
+  "author": "ClipForge",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -10,6 +11,9 @@
     "build": "npm run build:main && vite build",
     "build:main": "tsc -p tsconfig.main.json",
     "build:extension-icons": "node scripts/generate-extension-icons.mjs",
+    "fetch-binaries": "node scripts/fetch-binaries.mjs",
+    "pack": "npm run build && npm run fetch-binaries && electron-builder --dir",
+    "dist": "npm run build && npm run fetch-binaries && electron-builder",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run build:main && node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit"
@@ -27,6 +31,9 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^39.2.6",
+    "electron-builder": "^25.1.8",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
     "typescript": "^5.7.2",
     "vite": "^7.2.4",
     "wait-on": "^8.0.1"
