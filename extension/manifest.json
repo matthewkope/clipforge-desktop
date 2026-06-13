@@ -3,14 +3,14 @@
   "name": "ClipForge",
   "version": "0.2.0",
   "description": "Send the active tab, a copied media URL, or a YouTube clip selection to ClipForge.",
-  "permissions": ["activeTab", "clipboardRead", "tabs", "storage"],
+  "permissions": ["activeTab", "clipboardRead", "storage", "contextMenus", "notifications"],
   "host_permissions": ["http://127.0.0.1:38473/*"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/*"],
+      "matches": ["*://*.youtube.com/*", "*://*.twitch.tv/*", "*://*.vimeo.com/*", "*://*.reddit.com/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

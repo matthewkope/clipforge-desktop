@@ -67,7 +67,8 @@ async function extractBraveCookiesToFile(domain: string): Promise<string | undef
 
       const cookiesFile = path.join(os.tmpdir(), `clipforge-pinterest-cookies-${Date.now()}.txt`);
       const content = '# Netscape HTTP Cookie File\n' + lines.join('\n') + '\n';
-      await fs.writeFile(cookiesFile, content, 'utf8');
+      // 0600: the file holds decrypted session cookies — keep it readable only by the current user.
+      await fs.writeFile(cookiesFile, content, { encoding: 'utf8', mode: 0o600 });
       return cookiesFile;
     } finally {
       await fs.rm(tempDb, { force: true }).catch(() => {});
@@ -121,6 +122,12 @@ interface CookieRow {
 
 function queryCookiesDb(dbPath: string, domain: string): CookieRow[] {
   const cleanDomain = domain.replace(/^\.+/, '');
+  // Defense in depth: the domain is interpolated into SQL below, so reject anything
+  // that is not a plain hostname (letters, digits, dots, hyphens). Prevents SQL
+  // injection if a caller ever passes an untrusted domain.
+  if (!/^[a-z0-9.-]+$/i.test(cleanDomain)) {
+    return [];
+  }
   // Use hex() so the blob is safe as text; avoid binary in stdout
   const query = `SELECT host_key, name, path, expires_utc, is_secure, is_httponly, hex(encrypted_value) FROM cookies WHERE host_key LIKE '%.${cleanDomain}' OR host_key = '${cleanDomain}'`;
 

@@ -2,14 +2,20 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppApi,
   CookieSource,
+  DownloadHistoryEntry,
+  DownloadHistorySource,
   DownloadProgress,
+  DownloadQueueState,
   DownloadRequest,
   DownloadResult,
   ExtensionBridgeConfig,
   ExtensionDownloadRequest,
   GalleryDownloadRequest,
   MediaThumbnailUpdate,
-  PinterestSafeModeSettings
+  PinterestSafeModeSettings,
+  WatchSubscription,
+  WatchSubscriptionInput,
+  YtDlpUpdateInfo
 } from '../shared/media.js';
 
 const api: AppApi = {
@@ -23,9 +29,24 @@ const api: AppApi = {
   chooseFolder: () => ipcRenderer.invoke('folder:choose'),
   chooseCookieFile: () => ipcRenderer.invoke('cookies:choose-file'),
   chooseWhisperModel: () => ipcRenderer.invoke('whisper:model:choose'),
-  startDownload: (request: DownloadRequest) => ipcRenderer.invoke('download:start', request),
+  startDownload: (request: DownloadRequest, source?: DownloadHistorySource) =>
+    ipcRenderer.invoke('download:start', request, source),
+  startBatchDownload: (urls: string[], baseRequest: Omit<DownloadRequest, 'url'>) =>
+    ipcRenderer.invoke('download:batch-start', urls, baseRequest),
   startGalleryDownload: (request: GalleryDownloadRequest) => ipcRenderer.invoke('download:gallery-start', request),
   cancelDownload: (downloadId: string) => ipcRenderer.invoke('download:cancel', downloadId),
+  cancelAllDownloads: () => ipcRenderer.invoke('download:cancel-all'),
+  setDownloadConcurrency: (n: number) => ipcRenderer.invoke('queue:set-concurrency', n),
+  getDownloadHistory: () => ipcRenderer.invoke('history:list'),
+  removeDownloadHistoryEntry: (id: string) => ipcRenderer.invoke('history:remove', id),
+  clearDownloadHistory: () => ipcRenderer.invoke('history:clear'),
+  getDownloadCover: (filePath: string) => ipcRenderer.invoke('history:cover', filePath),
+  listWatchSubscriptions: () => ipcRenderer.invoke('watch:list'),
+  addWatchSubscription: (input: WatchSubscriptionInput) => ipcRenderer.invoke('watch:add', input),
+  updateWatchSubscription: (id: string, patch: Partial<WatchSubscriptionInput> & { enabled?: boolean }) =>
+    ipcRenderer.invoke('watch:update', id, patch),
+  removeWatchSubscription: (id: string) => ipcRenderer.invoke('watch:remove', id),
+  syncWatchSubscriptionNow: (id: string) => ipcRenderer.invoke('watch:sync-now', id),
   updateTool: (tool) => ipcRenderer.invoke('tool:update', tool),
   getPinterestDebugReport: () => ipcRenderer.invoke('pinterest:debug-report'),
   getPinterestRateLimitState: () => ipcRenderer.invoke('pinterest:rate-state'),
@@ -39,6 +60,26 @@ const api: AppApi = {
     const listener = (_event: Electron.IpcRendererEvent, request: ExtensionDownloadRequest) => callback(request);
     ipcRenderer.on('extension:download-request', listener);
     return () => ipcRenderer.removeListener('extension:download-request', listener);
+  },
+  onYtDlpUpdateAvailable: (callback: (info: YtDlpUpdateInfo) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: YtDlpUpdateInfo) => callback(info);
+    ipcRenderer.on('app:ytdlp-update-available', listener);
+    return () => ipcRenderer.removeListener('app:ytdlp-update-available', listener);
+  },
+  onDownloadHistoryChanged: (callback: (entries: DownloadHistoryEntry[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, entries: DownloadHistoryEntry[]) => callback(entries);
+    ipcRenderer.on('history:changed', listener);
+    return () => ipcRenderer.removeListener('history:changed', listener);
+  },
+  onDownloadQueueChanged: (callback: (state: DownloadQueueState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: DownloadQueueState) => callback(state);
+    ipcRenderer.on('download:queue', listener);
+    return () => ipcRenderer.removeListener('download:queue', listener);
+  },
+  onWatchSubscriptionsChanged: (callback: (watches: WatchSubscription[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, watches: WatchSubscription[]) => callback(watches);
+    ipcRenderer.on('watch:changed', listener);
+    return () => ipcRenderer.removeListener('watch:changed', listener);
   },
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: DownloadProgress) => callback(progress);

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { CookieSource, DownloadRequest, MediaInfo, OutputType, PlaylistEntry, YtDlpStrategy } from '../shared/media.js';
+import type { ClipRange, CookieSource, DownloadRequest, MediaInfo, OutputType, PlaylistEntry, YtDlpStrategy } from '../shared/media.js';
 
 interface YtDlpRunResult {
   stdout: string;
@@ -187,7 +187,7 @@ async function fetchFirstPlaylistEntryDetails(
   }
 
   try {
-    const result = await runYtDlp([...strategyArgs(strategy), '-J', '--no-playlist', entryUrl], 45_000);
+    const result = await runYtDlp([...strategyArgs(strategy), '-J', '--no-playlist', '--', entryUrl], 45_000);
     return JSON.parse(result.stdout) as Partial<MediaInfo>;
   } catch {
     return null;
@@ -237,6 +237,11 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
     case 'webm':
       args.push('-f', videoFormatSelector(request.qualityId), '--recode-video', 'webm');
       break;
+    case 'gif':
+      // GIF downloads a 480p-capped MP4 first; the download manager converts
+      // it to an actual GIF with ffmpeg's palette filter afterwards.
+      args.push('-f', 'bv*[height<=480]+ba/b[height<=480]', '--merge-output-format', 'mp4');
+      break;
     case 'subtitles':
     case 'markdown':
     case 'timed-transcript':
@@ -255,15 +260,40 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
   args.push(
     '--progress-template',
     'download:%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress.filename)s',
+    '--',
     request.url
   );
 
   return args;
 }
 
-export function buildWhisperAudioArgs(request: DownloadRequest): string[] {
+// Fetches captions only, into an arbitrary output template (used for clip
+// caption burning and the extension transcript endpoint, which both want the
+// SRT in a temp dir rather than the user's save folder).
+export function buildSubtitleFetchArgs(request: DownloadRequest, outputTemplate: string): string[] {
   validateUrl(request.url);
   return [
+    ...strategyArgs(request.ytDlpStrategy ?? automaticStrategyForUrl(request.url)),
+    ...cookieArgs(request.cookieSource, request.cookieFilePath),
+    '--no-playlist',
+    '--no-warnings',
+    '--skip-download',
+    '--write-subs',
+    '--write-auto-subs',
+    '--sub-langs',
+    request.subtitleLanguage || 'en.*',
+    '--sub-format',
+    'srt',
+    '-o',
+    outputTemplate,
+    '--',
+    request.url
+  ];
+}
+
+export function buildWhisperAudioArgs(request: DownloadRequest, clipSection?: ClipRange): string[] {
+  validateUrl(request.url);
+  const args = [
     ...strategyArgs(request.ytDlpStrategy ?? automaticStrategyForUrl(request.url)),
     ...cookieArgs(request.cookieSource, request.cookieFilePath),
     ...overwriteArgs(request.forceOverwrite),
@@ -271,29 +301,80 @@ export function buildWhisperAudioArgs(request: DownloadRequest): string[] {
     '--newline',
     '-x',
     '--audio-format',
-    'wav',
+    'wav'
+  ];
+  if (clipSection) {
+    // Only download the clip's audio section so whisper transcribes just the
+    // clip; the resulting cue timestamps are already clip-relative.
+    args.push(
+      '--download-sections',
+      `*${formatClipSeconds(clipSection.start)}-${formatClipSeconds(clipSection.end)}`,
+      '--force-keyframes-at-cuts'
+    );
+  }
+  args.push(
     '-o',
     outputTemplateForRequest(request),
     '--progress-template',
     'download:%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress.filename)s',
+    '--',
     request.url
-  ];
+  );
+  return args;
 }
 
 function outputTemplateForRequest(request: DownloadRequest): string {
+  const clipSuffix = request.clipRange
+    ? ` [clip ${formatClipTimestamp(request.clipRange.start)}-${formatClipTimestamp(request.clipRange.end)}]`
+    : '';
+
+  const customTemplate = request.outputTemplate?.trim();
+  if (customTemplate) {
+    return path.join(request.outputPath, `${customTemplateFileName(customTemplate, request)}${clipSuffix}.%(ext)s`);
+  }
+
   if (request.isPlaylist) {
     return path.join(request.outputPath, '%(playlist_index)03d - %(title)s.%(ext)s');
   }
 
   const snapshotTitle = sanitizeSnapshotFileName(request.mediaTitle ?? '');
-  const clipSuffix = request.clipRange
-    ? ` [clip ${formatClipTimestamp(request.clipRange.start)}-${formatClipTimestamp(request.clipRange.end)}]`
-    : '';
   return path.join(request.outputPath, `${snapshotTitle || '%(title)s'}${clipSuffix}.%(ext)s`);
 }
 
+// Builds a filename from a user template like "{uploader} - {title} ({date})".
+// Literal characters are sanitized the same way snapshot titles are, while the
+// yt-dlp %(...)s placeholders substituted in are kept intact.
+function customTemplateFileName(template: string, request: DownloadRequest): string {
+  const sanitizedTitle = sanitizeSnapshotFileName(request.mediaTitle ?? '');
+  const substitutions: Record<string, string> = {
+    '{title}': sanitizedTitle || '%(title)s',
+    '{uploader}': '%(uploader)s',
+    '{date}': '%(upload_date)s',
+    '{id}': '%(id)s'
+  };
+  const fileName = template
+    .split(/(\{title\}|\{uploader\}|\{date\}|\{id\})/)
+    .map((part) => substitutions[part] ?? sanitizeTemplateLiteral(part))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+|\.+$/g, '');
+  return fileName || '%(title)s';
+}
+
+function sanitizeTemplateLiteral(value: string): string {
+  return value.replace(/%/g, ' percent').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ');
+}
+
 function isClipOutputType(outputType: OutputType): boolean {
-  return outputType === 'mp4' || outputType === 'webm' || outputType === 'mp3' || outputType === 'wav' || outputType === 'm4a';
+  return (
+    outputType === 'mp4' ||
+    outputType === 'webm' ||
+    outputType === 'gif' ||
+    outputType === 'mp3' ||
+    outputType === 'wav' ||
+    outputType === 'm4a'
+  );
 }
 
 function formatClipSeconds(value: number): string {
@@ -324,6 +405,24 @@ function sanitizeSnapshotFileName(value: string): string {
 
 export function classifyYtDlpError(output: string): string {
   const normalized = output.toLowerCase();
+  // Age check must run before the sign-in/bot check: "confirm your age"
+  // also matches that check's "confirm you" needle.
+  if (normalized.includes('age-restricted') || normalized.includes('age restricted') || normalized.includes('confirm your age')) {
+    return 'This media is age-restricted. Try using browser cookies from a signed-in browser profile that can view it, or a cookies.txt file.';
+  }
+  if (
+    // Covers "not available in your country" and "has not made this video
+    // available in your country" phrasings.
+    normalized.includes('available in your country') ||
+    normalized.includes('geo restriction') ||
+    normalized.includes('geo-restricted') ||
+    (normalized.includes('region') && normalized.includes('block'))
+  ) {
+    return 'This media is not available in your region (geo-blocked). It can only be downloaded from a network in a country where it is available.';
+  }
+  if (normalized.includes('requested format is not available')) {
+    return 'The requested quality/format is not available for this media. Pick a different quality and try again.';
+  }
   if (normalized.includes('sign in to confirm') || normalized.includes('not a bot') || normalized.includes('confirm you')) {
     return 'YouTube is blocking yt-dlp with a sign-in or bot-check page. The app tried its no-login compatibility modes. Try again later, update yt-dlp, or use a different network.';
   }

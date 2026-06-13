@@ -1,5 +1,6 @@
-import { Images, UserRound } from 'lucide-react';
-import type { MediaAnalyzerResult } from '../../shared/media';
+import { useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight, Images, UserRound } from 'lucide-react';
+import type { MediaAnalyzerResult, MediaItem } from '../../shared/media';
 
 interface GalleryPreviewCardProps {
   media: MediaAnalyzerResult | null;
@@ -18,7 +19,18 @@ function itemCountLabel(media: MediaAnalyzerResult): string {
   return parts.join(' · ');
 }
 
+function itemImage(item: MediaItem): string | undefined {
+  return item.thumbnail || (item.type === 'image' ? item.url : undefined);
+}
+
 export function GalleryPreviewCard({ media }: GalleryPreviewCardProps) {
+  const [slide, setSlide] = useState(0);
+  const slides = media?.items.map(itemImage).filter((src): src is string => Boolean(src)) ?? [];
+
+  useEffect(() => {
+    setSlide(0);
+  }, [media?.sourceUrl]);
+
   if (!media) {
     return (
       <section className="preview-empty">
@@ -31,9 +43,31 @@ export function GalleryPreviewCard({ media }: GalleryPreviewCardProps) {
     );
   }
 
+  const currentSlide = Math.min(slide, Math.max(0, slides.length - 1));
+  const cover = slides[currentSlide] ?? media.thumbnail;
+  const showArrows = slides.length > 1;
+  const cycle = (step: number) => {
+    setSlide((current) => (current + step + slides.length) % slides.length);
+  };
+
   return (
     <section className="preview-card">
-      {media.thumbnail ? <img src={media.thumbnail} alt="" /> : <div className="thumbnail-placeholder" />}
+      <div className="carousel-viewer">
+        {cover ? <img src={cover} alt="" /> : <div className="thumbnail-placeholder" />}
+        {showArrows && (
+          <>
+            <button type="button" className="carousel-arrow carousel-arrow-left" aria-label="Previous photo" onClick={() => cycle(-1)}>
+              <ChevronLeft size={26} />
+            </button>
+            <button type="button" className="carousel-arrow carousel-arrow-right" aria-label="Next photo" onClick={() => cycle(1)}>
+              <ChevronRight size={26} />
+            </button>
+            <span className="carousel-counter">
+              {currentSlide + 1} / {slides.length}
+            </span>
+          </>
+        )}
+      </div>
       <div className="preview-body">
         <p className="source">{media.platform}</p>
         <h2>{media.title}</h2>

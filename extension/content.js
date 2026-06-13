@@ -1,26 +1,51 @@
-// ClipForge YouTube clip picker.
-// Adds a scissor button to the player controls; clicking it opens a panel to
-// pick a start/end range, choose a saved ClipForge preset, and send the clip
-// to the desktop app for a section download.
+// ClipForge clip picker.
+// On YouTube: adds a scissor button to the player controls; clicking it opens
+// a panel to pick a start/end range, choose a saved ClipForge preset, and send
+// the clip to the desktop app for a section download.
+// On Twitch: a scissor button is added to the player control bar (next to the
+// settings gear). On Vimeo/Reddit: a floating scissor button over the main
+// <video>. Both toggle the same panel (without the progress-bar markers and
+// transcript search, which are YouTube-player specific).
 // Note: YouTube enforces Trusted Types, so all DOM here is built with
 // createElement/createElementNS — innerHTML would throw.
 
 const SELECTION_STORAGE_KEY = 'clipforgeClipSelection';
+const CROP_STORAGE_KEY = 'clipforgeClipCrop';
+const CAPTIONS_STORAGE_KEY = 'clipforgeBurnCaptions';
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const IS_YOUTUBE = /(^|\.)youtube\.com$/i.test(location.hostname);
+const IS_TWITCH = /(^|\.)twitch\.tv$/i.test(location.hostname);
+
+// Transcript segments cached per video id so repeated searches while picking a
+// clip do not refetch captions through the desktop app.
+const transcriptCache = new Map();
 
 let panel = null;
 let barOverlay = null;
 let previewStopHandler = null;
+let panelKeydownCleanup = null;
+let floatButton = null;
+let floatVideo = null;
 
 const observer = new MutationObserver(() => {
-  ensureScissorButton();
+  ensureClipButton();
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
 document.addEventListener('yt-navigate-finish', () => {
   closePanel();
-  ensureScissorButton();
+  ensureClipButton();
 });
-ensureScissorButton();
+ensureClipButton();
+
+function ensureClipButton() {
+  if (IS_YOUTUBE) {
+    ensureScissorButton();
+  } else if (IS_TWITCH) {
+    ensureTwitchBarButton();
+  } else {
+    ensureFloatingButton();
+  }
+}
 
 function scissorIcon() {
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -77,6 +102,119 @@ function ensureScissorButton() {
   }
 }
 
+// Twitch: place the scissor button inside the player control bar (next to the
+// settings gear) rather than floating it over the video. Twitch re-renders the
+// controls on theatre/fullscreen toggles and SPA navigation, so the
+// MutationObserver re-runs this and re-inserts the button when it disappears.
+function ensureTwitchBarButton() {
+  const existing = document.querySelector('.clipforge-twitch-button');
+  if (existing && existing.isConnected) {
+    return;
+  }
+
+  const settingsButton = document.querySelector('[data-a-target="player-settings-button"]');
+  if (!settingsButton) {
+    // Controls not mounted yet (or a non-player page); the observer retries.
+    return;
+  }
+  const group = settingsButton.closest('.player-controls__right-control-group');
+  if (!group || group.querySelector('.clipforge-twitch-button')) {
+    return;
+  }
+
+  // The settings button is wrapped in layout divs; find its wrapper that is a
+  // direct child of the control group so we can insert just to its left.
+  let wrapper = settingsButton;
+  while (wrapper.parentElement && wrapper.parentElement !== group) {
+    wrapper = wrapper.parentElement;
+  }
+
+  const button = el('button', 'clipforge-twitch-button');
+  button.type = 'button';
+  button.title = 'Clip with ClipForge';
+  button.setAttribute('aria-label', 'Clip with ClipForge');
+  button.appendChild(scissorIcon());
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePanel();
+  });
+  group.insertBefore(button, wrapper);
+}
+
+// Non-YouTube sites (Vimeo/Reddit): the main playing video is taken to
+// be the largest <video> by rendered area. Reddit nests its video inside the
+// open shadow root of <shreddit-player>, so peek into those too.
+function allVideos() {
+  const videos = [...document.querySelectorAll('video')];
+  for (const host of document.querySelectorAll('shreddit-player, shreddit-player-2, shreddit-async-loader')) {
+    if (host.shadowRoot) {
+      videos.push(...host.shadowRoot.querySelectorAll('video'));
+    }
+  }
+  return videos;
+}
+
+function largestVideo() {
+  let best = null;
+  let bestArea = 0;
+  for (const video of allVideos()) {
+    const area = video.clientWidth * video.clientHeight;
+    if (area > bestArea) {
+      best = video;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
+// Walks out of any shadow roots so injected elements land in the light DOM,
+// where the extension's stylesheet applies.
+function lightDomAnchor(video) {
+  let node = video;
+  while (node.getRootNode() instanceof ShadowRoot) {
+    node = node.getRootNode().host;
+  }
+  return node;
+}
+
+// Floating scissor button rendered top-right over the main video on
+// non-YouTube sites. Re-attached whenever SPA navigation swaps the video out.
+function ensureFloatingButton() {
+  const video = largestVideo();
+  if (!video) {
+    if (floatButton) {
+      floatButton.remove();
+      floatButton = null;
+      floatVideo = null;
+    }
+    return;
+  }
+  if (floatButton && floatButton.isConnected && floatVideo === video) {
+    return;
+  }
+  floatButton?.remove();
+  floatVideo = video;
+
+  const anchor = lightDomAnchor(video);
+  const container = anchor.parentElement || document.body;
+  if (container !== document.body && getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
+
+  floatButton = el('button', 'clipforge-float-button');
+  floatButton.type = 'button';
+  floatButton.title = 'Clip with ClipForge';
+  floatButton.setAttribute('aria-label', 'Clip with ClipForge');
+  floatButton.appendChild(scissorIcon());
+  floatButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    togglePanel();
+  });
+  container.appendChild(floatButton);
+}
+
 function currentVideoId() {
   const url = new URL(location.href);
   if (url.pathname === '/watch') {
@@ -87,7 +225,10 @@ function currentVideoId() {
 }
 
 function playerVideo() {
-  return document.querySelector('.html5-video-player video.html5-main-video') || document.querySelector('video');
+  if (IS_YOUTUBE) {
+    return document.querySelector('.html5-video-player video.html5-main-video') || document.querySelector('video');
+  }
+  return floatVideo?.isConnected ? floatVideo : largestVideo();
 }
 
 function togglePanel() {
@@ -100,6 +241,8 @@ function togglePanel() {
 
 function closePanel() {
   stopPreview();
+  panelKeydownCleanup?.();
+  panelKeydownCleanup = null;
   panel?.remove();
   panel = null;
   barOverlay?.remove();
@@ -119,8 +262,8 @@ function el(tag, className, text) {
 
 async function openPanel() {
   const video = playerVideo();
-  const container = document.querySelector('.html5-video-player');
-  if (!video || !container || !currentVideoId()) {
+  const container = IS_YOUTUBE ? document.querySelector('.html5-video-player') : document.body;
+  if (!video || !container || (IS_YOUTUBE && !currentVideoId())) {
     return;
   }
 
@@ -160,10 +303,14 @@ async function openPanel() {
   const sliderMax = duration > 0 ? duration : Math.max(end, start + 1) + 60;
   const range = { start, end: Math.max(end, start + 1) };
   barOverlay?.remove();
-  barOverlay = createBarMarkers(video, sliderMax, range, () => {
-    startRow.input.value = formatTime(range.start);
-    endRow.input.value = formatTime(range.end);
-  });
+  barOverlay = null;
+  if (IS_YOUTUBE) {
+    // Progress-bar carets only exist on YouTube's player.
+    barOverlay = createBarMarkers(video, sliderMax, range, () => {
+      startRow.input.value = formatTime(range.start);
+      endRow.input.value = formatTime(range.end);
+    });
+  }
 
   const syncSlidersFromInputs = () => {
     const startValue = parseTime(startRow.input.value);
@@ -186,6 +333,44 @@ async function openPanel() {
   outputRow.appendChild(presetSelect);
   panel.appendChild(outputRow);
 
+  // MP4-only ffmpeg treatments applied by the desktop app after download.
+  const optionsRow = el('div', 'clipforge-row clipforge-options-row');
+  const cropToggle = makeOptionToggle('9:16 crop', 'clipforge-crop-toggle', CROP_STORAGE_KEY);
+  const captionsToggle = makeOptionToggle('Burn captions', 'clipforge-captions-toggle', CAPTIONS_STORAGE_KEY);
+  optionsRow.appendChild(cropToggle.wrapper);
+  optionsRow.appendChild(captionsToggle.wrapper);
+  panel.appendChild(optionsRow);
+
+  // One-click export presets for the major short-form platforms.
+  const platformRow = el('div', 'clipforge-row clipforge-platform-row');
+  const makePlatformButton = (label) => {
+    const button = el('button', 'clipforge-platform-button', label);
+    button.type = 'button';
+    platformRow.appendChild(button);
+    return button;
+  };
+  const reelsButton = makePlatformButton('Reels/TikTok');
+  const shortsButton = makePlatformButton('Shorts');
+  const xButton = makePlatformButton('X');
+  panel.appendChild(platformRow);
+
+  // Transcript search: type a phrase, click a match, and the clip window jumps
+  // to that moment (keeping its current length). YouTube only — the bridge
+  // transcript endpoint works off the YouTube video id.
+  let searchInput = null;
+  let searchResults = null;
+  if (IS_YOUTUBE) {
+    const searchSection = el('div', 'clipforge-search');
+    searchInput = el('input', 'clipforge-search-input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search transcript… (e.g. a quote)';
+    searchInput.spellcheck = false;
+    searchResults = el('div', 'clipforge-search-results');
+    searchSection.appendChild(searchInput);
+    searchSection.appendChild(searchResults);
+    panel.appendChild(searchSection);
+  }
+
   const actions = el('div', 'clipforge-actions');
   const previewButton = el('button', 'clipforge-preview', 'Preview');
   previewButton.type = 'button';
@@ -197,7 +382,17 @@ async function openPanel() {
   panel.appendChild(actions);
 
   panel.appendChild(el('div', 'clipforge-status'));
-  container.appendChild(panel);
+  if (IS_YOUTUBE) {
+    container.appendChild(panel);
+  } else {
+    // Fixed-position panel pinned near the video's top-right corner.
+    panel.classList.add('clipforge-panel-floating');
+    const rect = video.getBoundingClientRect();
+    const width = 300;
+    panel.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 20, rect.right - width - 12))}px`;
+    panel.style.top = `${Math.max(8, Math.min(window.innerHeight - 120, rect.top + 48))}px`;
+    document.body.appendChild(panel);
+  }
 
   // Keep typing inside the panel from triggering YouTube player shortcuts.
   for (const eventName of ['keydown', 'keyup', 'keypress']) {
@@ -222,11 +417,223 @@ async function openPanel() {
   presetSelect.addEventListener('change', () => {
     chrome.storage.local.set({ [SELECTION_STORAGE_KEY]: presetSelect.value });
   });
+  if (searchInput && searchResults) {
+    setupTranscriptSearch(searchInput, searchResults, (segment) => {
+      const currentStart = parseTime(startRow.input.value) ?? 0;
+      const currentEnd = parseTime(endRow.input.value);
+      const length = currentEnd && currentEnd > currentStart ? currentEnd - currentStart : 15;
+      const nextStart = Math.max(0, Math.min(segment.start, Math.max(0, sliderMax - 1)));
+      const nextEnd = Math.min(sliderMax, nextStart + length);
+      startRow.input.value = formatTime(nextStart);
+      endRow.input.value = formatTime(nextEnd);
+      syncSlidersFromInputs();
+      video.currentTime = nextStart;
+    });
+  }
   sendButton.addEventListener('click', () => {
     void sendClip(startRow.input, endRow.input, presetSelect, sendButton, video);
   });
 
+  // Platform export presets: toggle crop/captions and sanity-check the
+  // selection length against each platform's limit.
+  const setToggle = (toggle, checked) => {
+    if (toggle.checkbox.checked !== checked) {
+      toggle.checkbox.checked = checked;
+      // Fire change so the persisted storage value stays in sync.
+      toggle.checkbox.dispatchEvent(new Event('change'));
+    }
+  };
+  const selectionLength = () => {
+    const startValue = parseTime(startRow.input.value);
+    const endValue = parseTime(endRow.input.value);
+    return startValue !== null && endValue !== null ? endValue - startValue : 0;
+  };
+  reelsButton.addEventListener('click', () => {
+    setToggle(cropToggle, true);
+    setToggle(captionsToggle, true);
+    if (selectionLength() > 90) {
+      showPanelStatus('Reels are limited to 90s.', 'error');
+    } else {
+      showPanelStatus('Set up for Reels/TikTok: 9:16 crop + captions.');
+    }
+  });
+  shortsButton.addEventListener('click', () => {
+    setToggle(cropToggle, true);
+    setToggle(captionsToggle, true);
+    if (selectionLength() > 60) {
+      const startValue = parseTime(startRow.input.value) ?? 0;
+      endRow.input.value = formatTime(Math.min(sliderMax, startValue + 60));
+      syncSlidersFromInputs();
+      showPanelStatus('End clamped to a 60s window for Shorts.');
+    } else {
+      showPanelStatus('Set up for Shorts: 9:16 crop + captions.');
+    }
+  });
+  xButton.addEventListener('click', () => {
+    setToggle(cropToggle, false);
+    if (selectionLength() > 140) {
+      showPanelStatus('X clips are limited to 140s.', 'error');
+    } else {
+      showPanelStatus('Set up for X: original aspect ratio.');
+    }
+  });
+
+  // Document-level keyboard shortcuts while the panel is open. Capture phase
+  // plus stopImmediatePropagation keeps YouTube's own player shortcuts (and
+  // other site hotkeys) from also firing on handled keys.
+  const slideWindow = (delta) => {
+    syncSlidersFromInputs();
+    const length = Math.max(0.1, range.end - range.start);
+    const newStart = Math.max(0, Math.min(Math.max(0, sliderMax - length), range.start + delta));
+    range.start = newStart;
+    range.end = Math.min(sliderMax, newStart + length);
+    startRow.input.value = formatTime(range.start);
+    endRow.input.value = formatTime(range.end);
+    barOverlay?.update();
+    video.currentTime = range.start;
+  };
+  const onPanelKeydown = (event) => {
+    const target = event.target;
+    if (
+      (panel && target instanceof Node && panel.contains(target)) ||
+      (target instanceof Element &&
+        (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable))
+    ) {
+      return;
+    }
+    let handled = true;
+    switch (event.key) {
+      case '[':
+        startRow.input.value = formatTime(video.currentTime);
+        syncSlidersFromInputs();
+        break;
+      case ']':
+        endRow.input.value = formatTime(video.currentTime);
+        syncSlidersFromInputs();
+        break;
+      case 'ArrowLeft':
+        slideWindow(event.shiftKey ? -0.1 : -1);
+        break;
+      case 'ArrowRight':
+        slideWindow(event.shiftKey ? 0.1 : 1);
+        break;
+      case 'Enter':
+        if (!sendButton.disabled) {
+          sendButton.click();
+        }
+        break;
+      case 'Escape':
+        closePanel();
+        break;
+      default:
+        handled = false;
+    }
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    }
+  };
+  document.addEventListener('keydown', onPanelKeydown, true);
+  panelKeydownCleanup = () => document.removeEventListener('keydown', onPanelKeydown, true);
+
   await populateOutputs(presetSelect, sendButton);
+}
+
+// Checkbox persisted in extension storage; used for the crop/caption options.
+function makeOptionToggle(labelText, className, storageKey) {
+  const wrapper = el('label', 'clipforge-option');
+  const checkbox = el('input', className);
+  checkbox.type = 'checkbox';
+  wrapper.appendChild(checkbox);
+  wrapper.appendChild(el('span', '', labelText));
+  chrome.storage.local
+    .get(storageKey)
+    .then((stored) => {
+      checkbox.checked = Boolean(stored?.[storageKey]);
+    })
+    .catch(() => undefined);
+  checkbox.addEventListener('change', () => {
+    chrome.storage.local.set({ [storageKey]: checkbox.checked });
+  });
+  return { wrapper, checkbox };
+}
+
+async function loadTranscript() {
+  const videoId = currentVideoId();
+  if (!videoId) {
+    throw new Error('Could not detect the YouTube video ID.');
+  }
+  if (transcriptCache.has(videoId)) {
+    return transcriptCache.get(videoId);
+  }
+  const response = await chrome.runtime
+    .sendMessage({
+      type: 'clipforge-transcript',
+      payload: { url: `https://www.youtube.com/watch?v=${videoId}` }
+    })
+    .catch(() => null);
+  if (!response?.ok || !Array.isArray(response.body?.segments)) {
+    throw new Error(response?.body?.error || 'Open the ClipForge desktop app to search transcripts.');
+  }
+  transcriptCache.set(videoId, response.body.segments);
+  return response.body.segments;
+}
+
+function setupTranscriptSearch(input, results, onPick) {
+  let debounceTimer = null;
+  let loading = false;
+
+  const renderMessage = (message) => {
+    results.replaceChildren(el('div', 'clipforge-search-hint', message));
+  };
+
+  const renderMatches = (segments, query) => {
+    const needle = query.toLowerCase();
+    const matches = segments.filter((segment) => segment.text.toLowerCase().includes(needle)).slice(0, 8);
+    if (matches.length === 0) {
+      renderMessage('No transcript lines match.');
+      return;
+    }
+    results.replaceChildren();
+    for (const match of matches) {
+      const button = el('button', 'clipforge-search-result');
+      button.type = 'button';
+      button.appendChild(el('span', 'clipforge-search-time', formatTime(match.start)));
+      button.appendChild(el('span', 'clipforge-search-text', match.text));
+      button.addEventListener('click', () => onPick(match));
+      results.appendChild(button);
+    }
+  };
+
+  const run = async () => {
+    const query = input.value.trim();
+    if (query.length < 2) {
+      results.replaceChildren();
+      return;
+    }
+    try {
+      if (!transcriptCache.has(currentVideoId()) && !loading) {
+        loading = true;
+        renderMessage('Loading transcript…');
+      }
+      const segments = await loadTranscript();
+      loading = false;
+      // The query may have changed while the transcript was loading.
+      const latest = input.value.trim();
+      if (latest.length >= 2) {
+        renderMatches(segments, latest);
+      }
+    } catch (caught) {
+      loading = false;
+      renderMessage(caught?.message || 'Transcript search is unavailable.');
+    }
+  };
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => void run(), 250);
+  });
 }
 
 // Draggable start/end markers rendered directly on YouTube's progress bar.
@@ -337,7 +744,6 @@ function createBarMarkers(video, max, range, onChange) {
   const handles = {};
   for (const which of ['start', 'end']) {
     const handle = el('div', `clipforge-bar-handle clipforge-bar-handle-${which}`);
-    handle.appendChild(el('div', 'clipforge-bar-handle-grip'));
     overlay.appendChild(handle);
     handles[which] = handle;
 
@@ -501,6 +907,7 @@ async function populateOutputs(presetSelect, sendButton) {
   }
   presetSelect.append(new Option('MP4 video', 'format:mp4'));
   presetSelect.append(new Option('MP3 audio', 'format:mp3'));
+  presetSelect.append(new Option('GIF clip', 'format:gif'));
 
   const stored = await chrome.storage.local.get(SELECTION_STORAGE_KEY).catch(() => ({}));
   const storedValue = stored?.[SELECTION_STORAGE_KEY];
@@ -516,11 +923,9 @@ async function populateOutputs(presetSelect, sendButton) {
     showPanelStatus('Open ClipForge to send clips.', 'error');
   } else if (!body.saveFolderConfigured) {
     showPanelStatus('Choose a save folder in ClipForge first.', 'error');
-  } else if (body.downloadActive) {
-    showPanelStatus('Wait for the active ClipForge download to finish.', 'error');
   } else {
     sendButton.disabled = false;
-    showPanelStatus('');
+    showPanelStatus(body.downloadActive ? 'A download is running; new clips will queue.' : '');
   }
 }
 
@@ -529,14 +934,20 @@ async function sendClip(startInput, endInput, presetSelect, sendButton, video) {
   if (!range) {
     return;
   }
-  const videoId = currentVideoId();
-  if (!videoId) {
-    showPanelStatus('Could not detect the YouTube video ID.', 'error');
-    return;
+  let clipUrl = location.href;
+  if (IS_YOUTUBE) {
+    const videoId = currentVideoId();
+    if (!videoId) {
+      showPanelStatus('Could not detect the YouTube video ID.', 'error');
+      return;
+    }
+    clipUrl = `https://www.youtube.com/watch?v=${videoId}`;
   }
   const selection = presetSelect.value.startsWith('preset:')
     ? { presetId: presetSelect.value.slice('preset:'.length) }
     : { format: presetSelect.value.slice('format:'.length) || 'mp4' };
+  const cropChecked = panel?.querySelector('.clipforge-crop-toggle')?.checked;
+  const captionsChecked = panel?.querySelector('.clipforge-captions-toggle')?.checked;
 
   sendButton.disabled = true;
   showPanelStatus('Sending clip to ClipForge…');
@@ -544,11 +955,13 @@ async function sendClip(startInput, endInput, presetSelect, sendButton, video) {
     .sendMessage({
       type: 'clipforge-download',
       payload: {
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        source: 'youtube-player',
+        url: clipUrl,
+        source: IS_YOUTUBE ? 'youtube-player' : 'active-tab',
         clipStart: range.start,
         clipEnd: range.end,
-        ...selection
+        ...selection,
+        ...(cropChecked ? { crop: 'vertical' } : {}),
+        ...(captionsChecked ? { burnCaptions: true } : {})
       }
     })
     .catch(() => null);

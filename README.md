@@ -230,3 +230,25 @@ or a different network.
 pipx upgrade gallery-dl
 pipx upgrade instaloader
 ```
+
+## Legal
+
+ClipForge is a general-purpose tool provided **"as is", without warranty**, and
+is **not affiliated with** YouTube, Meta, Instagram, Facebook, TikTok, Pinterest,
+X, or any other platform. You are solely responsible for the content you download
+and must only use ClipForge for content you own, that is in the public domain,
+that is licensed for your use, or that you are otherwise permitted to save. Always
+respect copyright law and the terms of service of the sites you use.
+
+The full policies live in [`legal/`](./legal/):
+
+- [Terms of Use](./legal/TERMS_OF_USE.md)
+- [Privacy Policy](./legal/PRIVACY_POLICY.md)
+- [Acceptable Use Policy](./legal/ACCEPTABLE_USE_POLICY.md)
+- [Copyright / DMCA Policy](./legal/DMCA_POLICY.md)
+- [Disclaimer](./legal/DISCLAIMER.md)
+- [MIT License](./LICENSE) (source code)
+
+> These documents are templates, not legal advice. Fill in the `[BRACKETED]`
+> placeholders and have a lawyer review them before distributing the app,
+> especially commercially. See [`legal/README.md`](./legal/README.md).

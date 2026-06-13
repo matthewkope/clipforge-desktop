@@ -1,7 +1,19 @@
-export type OutputType = 'mp4' | 'mp3' | 'wav' | 'm4a' | 'webm' | 'subtitles' | 'markdown' | 'timed-transcript';
+// 'gif' is typed as the template-literal pattern `gif${string}` (which the
+// plain string 'gif' satisfies) so existing exhaustive Record<OutputType, ...>
+// maps that predate GIF support keep compiling without listing it.
+export type OutputType =
+  | 'mp4'
+  | 'mp3'
+  | 'wav'
+  | 'm4a'
+  | 'webm'
+  | `gif${string}`
+  | 'subtitles'
+  | 'markdown'
+  | 'timed-transcript';
 export type CookieSource = 'none' | 'chrome' | 'safari' | 'firefox' | 'edge' | 'brave';
 export type YtDlpStrategy = 'standard' | 'youtube-default-no-web' | 'youtube-tv' | 'youtube-mobile';
-export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'x' | 'unknown';
+export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'x' | 'reddit' | 'twitch' | 'unknown';
 export type MediaIntent =
   | 'instagram-image'
   | 'instagram-video'
@@ -14,6 +26,10 @@ export type MediaIntent =
   | 'pinterest-board'
   | 'pinterest-section'
   | 'x-video'
+  | 'reddit-video'
+  | 'reddit-post'
+  | 'twitch-video'
+  | 'twitch-clip'
   | 'youtube-video'
   | 'youtube-shorts'
   | 'youtube-playlist'
@@ -101,11 +117,84 @@ export interface ClipRange {
   end: number;
 }
 
+// Post-download ffmpeg treatments for clips: 'vertical' center-crops to 9:16
+// for Shorts/Reels/TikTok-style output.
+export type ClipCrop = 'vertical';
+
+// Styling for burned-in clip captions (libass force_style on the ffmpeg
+// subtitles filter). Defaults: medium size, bottom position.
+export interface CaptionStyle {
+  size?: 'small' | 'medium' | 'large';
+  position?: 'top' | 'middle' | 'bottom';
+}
+
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface YtDlpUpdateInfo {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+}
+
+export type DownloadHistoryStatus = 'queued' | 'downloading' | 'finished' | 'error' | 'cancelled';
+export type DownloadHistorySource = 'app' | 'extension' | 'batch' | 'watch' | 'gallery';
+
+export interface DownloadHistoryEntry {
+  id: string;
+  url: string;
+  title?: string;
+  thumbnail?: string;
+  label: string;
+  outputPath: string;
+  status: DownloadHistoryStatus;
+  error?: string;
+  savedPaths: string[];
+  source: DownloadHistorySource;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface DownloadQueueState {
+  activeDownloadId: string | null;
+  activeUrl?: string;
+  pendingCount: number;
+  activeCount?: number;
+}
+
+export type WatchOutputType = 'mp4' | 'mp3' | 'm4a' | 'wav';
+
+export interface WatchSubscription {
+  id: string;
+  url: string;
+  label: string;
+  outputType: WatchOutputType;
+  outputPath: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  createdAt: string;
+  lastCheckedAt?: string;
+  lastResult?: string;
+  syncing?: boolean;
+}
+
+export interface WatchSubscriptionInput {
+  url: string;
+  label?: string;
+  outputType: WatchOutputType;
+  outputPath: string;
+  intervalMinutes: number;
+}
+
 export interface DownloadRequest {
   url: string;
   outputTypes: OutputType[];
   outputPath: string;
   mediaTitle?: string;
+  mediaThumbnail?: string;
   qualityId?: string;
   subtitleLanguage?: string;
   cookieSource?: CookieSource;
@@ -117,6 +206,11 @@ export interface DownloadRequest {
   whisperModelPath?: string;
   forceOverwrite?: boolean;
   clipRange?: ClipRange;
+  clipCrop?: ClipCrop;
+  burnCaptions?: boolean;
+  captionStyle?: CaptionStyle;
+  // Custom filename template with {title}/{uploader}/{date}/{id} placeholders.
+  outputTemplate?: string;
 }
 
 export interface MediaItem {
@@ -187,6 +281,7 @@ export interface GalleryDownloadRequest {
   platform: Platform;
   tool: DownloadTool;
   outputPath: string;
+  thumbnail?: string;
   selectedItems?: number[];
   manifestId?: string;
   selectedItemIds?: string[];
@@ -251,13 +346,16 @@ export interface ExtensionBridgeConfig {
 
 export interface ExtensionDownloadRequest {
   url: string;
-  format?: 'mp4' | 'mp3' | 'markdown';
+  format?: 'mp4' | 'mp3' | 'markdown' | 'gif';
   presetId?: string;
   presetName?: string;
   formats?: OutputType[];
   source: 'active-tab' | 'clipboard' | 'youtube-player';
   clipStart?: number;
   clipEnd?: number;
+  crop?: ClipCrop;
+  burnCaptions?: boolean;
+  captionStyle?: CaptionStyle;
 }
 
 export interface MediaThumbnailUpdate {
@@ -274,9 +372,21 @@ export interface AppApi {
   chooseFolder: () => Promise<string | null>;
   chooseCookieFile: () => Promise<string | null>;
   chooseWhisperModel: () => Promise<string | null>;
-  startDownload: (request: DownloadRequest) => Promise<{ downloadId: string }>;
+  startDownload: (request: DownloadRequest, source?: DownloadHistorySource) => Promise<{ downloadId: string }>;
+  startBatchDownload: (urls: string[], baseRequest: Omit<DownloadRequest, 'url'>) => Promise<{ queued: number }>;
   startGalleryDownload: (request: GalleryDownloadRequest) => Promise<{ downloadId: string }>;
   cancelDownload: (downloadId: string) => Promise<void>;
+  cancelAllDownloads: () => Promise<void>;
+  setDownloadConcurrency: (n: number) => Promise<void>;
+  getDownloadHistory: () => Promise<DownloadHistoryEntry[]>;
+  removeDownloadHistoryEntry: (id: string) => Promise<DownloadHistoryEntry[]>;
+  clearDownloadHistory: () => Promise<DownloadHistoryEntry[]>;
+  getDownloadCover: (filePath: string) => Promise<string | null>;
+  listWatchSubscriptions: () => Promise<WatchSubscription[]>;
+  addWatchSubscription: (input: WatchSubscriptionInput) => Promise<WatchSubscription[]>;
+  updateWatchSubscription: (id: string, patch: Partial<WatchSubscriptionInput> & { enabled?: boolean }) => Promise<WatchSubscription[]>;
+  removeWatchSubscription: (id: string) => Promise<WatchSubscription[]>;
+  syncWatchSubscriptionNow: (id: string) => Promise<WatchSubscription[]>;
   updateTool: (tool: 'yt-dlp' | 'gallery-dl' | 'instaloader') => Promise<string>;
   getPinterestDebugReport: () => Promise<string>;
   getPinterestRateLimitState: () => Promise<PinterestRateLimitState>;
@@ -287,6 +397,10 @@ export interface AppApi {
   showInFolder: (path: string) => Promise<void>;
   updateExtensionBridgeConfig: (config: ExtensionBridgeConfig) => Promise<void>;
   onExtensionDownloadRequest: (callback: (request: ExtensionDownloadRequest) => void) => () => void;
+  onYtDlpUpdateAvailable: (callback: (info: YtDlpUpdateInfo) => void) => () => void;
+  onDownloadHistoryChanged: (callback: (entries: DownloadHistoryEntry[]) => void) => () => void;
+  onDownloadQueueChanged: (callback: (state: DownloadQueueState) => void) => () => void;
+  onWatchSubscriptionsChanged: (callback: (subscriptions: WatchSubscription[]) => void) => () => void;
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void;
   onDownloadComplete: (callback: (result: DownloadResult) => void) => () => void;
   onMediaThumbnail: (callback: (update: MediaThumbnailUpdate) => void) => () => void;

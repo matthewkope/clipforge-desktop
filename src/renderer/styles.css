@@ -135,6 +135,40 @@ h1 {
   line-height: 1.08;
 }
 
+.app-title-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s ease;
+}
+
+.app-title-button:not(.is-home):hover {
+  color: #07899b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.app-title-button:focus-visible {
+  outline: 2px solid #07899b;
+  outline-offset: 3px;
+}
+
+/* On the home view the title click is a no-op — render it as plain text.
+   Override the browser's default disabled greying so it stays full black. */
+.app-title-button.is-home,
+.app-title-button:disabled {
+  cursor: default;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+  opacity: 1;
+}
+
 h2 {
   font-size: clamp(0.98rem, 1.5vw, 1.05rem);
   line-height: 1.3;
@@ -1143,4 +1177,212 @@ dd {
   .setup-message {
     gap: 8px;
   }
+}
+
+.carousel-viewer {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.carousel-viewer img,
+.carousel-viewer .thumbnail-placeholder {
+  flex: 1;
+}
+
+.carousel-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(20, 32, 38, 0.42);
+  color: #ffffff;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.carousel-arrow:hover {
+  background: rgba(11, 153, 166, 0.75);
+  transform: translateY(-50%) scale(1.06);
+}
+
+.carousel-arrow-left {
+  left: 10px;
+}
+
+.carousel-arrow-right {
+  right: 10px;
+}
+
+.carousel-counter {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(20, 32, 38, 0.55);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+}
+
+.history-entry {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(20, 32, 38, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.history-entry + .history-entry {
+  margin-top: 8px;
+}
+
+.history-entry-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.history-cover {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(20, 32, 38, 0.06);
+  border: 1px solid rgba(20, 32, 38, 0.12);
+}
+
+.history-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8aa0a6;
+}
+
+.history-entry-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-entry-text strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 460px;
+}
+
+.history-entry-url {
+  font-size: 11px;
+  color: #5a6e74;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 460px;
+}
+
+.history-entry-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.history-status {
+  flex: none;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: rgba(20, 32, 38, 0.08);
+  color: #44585e;
+}
+
+.history-status.finished {
+  background: rgba(6, 166, 110, 0.14);
+  color: #0a7a55;
+}
+
+.history-status.downloading,
+.history-status.queued {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2456c4;
+}
+
+.history-status.error {
+  background: rgba(217, 64, 64, 0.12);
+  color: #b03030;
+}
+
+.history-status.cancelled {
+  background: rgba(20, 32, 38, 0.08);
+  color: #6a7b80;
+}
+
+.history-error {
+  color: #b03030;
+}
+
+.watch-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(20, 32, 38, 0.15);
+}
+
+.brand-reddit {
+  color: #ff4500;
+}
+
+.brand-twitch {
+  color: #9146ff;
+}
+
+/* Specificity matches `.pinterest-settings > label` so this row layout wins
+   over the generic grid label styling inside the History card. */
+label.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #cfc7bb;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fffdfa;
+  color: #61778a;
+}
+
+label.history-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  border: 0;
+  padding: 0;
+  color: #211f1b;
+  background: transparent;
+  outline: none;
+  font-weight: 500;
+}
+
+label.history-search:focus-within {
+  border-color: #0b9aac;
+  box-shadow: 0 0 0 3px rgba(11, 154, 172, 0.14);
 }

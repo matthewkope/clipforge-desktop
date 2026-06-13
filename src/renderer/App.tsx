@@ -12,13 +12,18 @@ import {
   Images,
   Instagram,
   Settings,
+  Twitch,
   Youtube
 } from 'lucide-react';
 import type {
+  CaptionStyle,
+  ClipCrop,
   ClipRange,
   CookieSource,
   DependencyStatus,
+  DownloadHistoryEntry,
   DownloadProgress,
+  DownloadQueueState,
   DownloadRequest,
   DownloadResult,
   ExtensionDownloadRequest,
@@ -29,9 +34,14 @@ import type {
   PinterestRateLimitState,
   PinterestSafeModeSettings,
   Platform,
-  QualityOption
+  QualityOption,
+  WatchSubscription,
+  WatchSubscriptionInput,
+  YtDlpUpdateInfo
 } from '../shared/media';
 import { CookieSourceSelector } from './components/CookieSourceSelector';
+import { DownloadsPanel } from './components/DownloadsPanel';
+import { WatchPanel } from './components/WatchPanel';
 import { FormatSelector } from './components/FormatSelector';
 import { GalleryPreviewCard } from './components/GalleryPreviewCard';
 import { MediaItemGrid } from './components/MediaItemGrid';
@@ -41,7 +51,7 @@ import { QualitySelector } from './components/QualitySelector';
 import { SaveFolderPicker } from './components/SaveFolderPicker';
 import { UrlInput } from './components/UrlInput';
 
-type Section = Platform | 'downloads' | 'settings';
+type Section = Platform | 'downloads' | 'settings' | 'watch';
 
 type NavIcon = ComponentType<{ size?: number; className?: string }>;
 
@@ -52,12 +62,15 @@ const platformSections: Array<{ id: Platform; label: string; icon: NavIcon }> = 
   { id: 'facebook', label: 'Facebook', icon: Facebook },
   { id: 'pinterest', label: 'Pinterest', icon: PinterestIcon },
   { id: 'x', label: 'X', icon: XIcon },
+  { id: 'reddit', label: 'Reddit', icon: RedditIcon },
+  { id: 'twitch', label: 'Twitch', icon: Twitch },
   { id: 'unknown', label: 'General URL', icon: Compass }
 ];
 
 const outputIcons: Record<OutputType, typeof Film> = {
   mp4: Film,
   webm: Film,
+  gif: Film,
   mp3: FileAudio,
   wav: FileAudio,
   m4a: FileAudio,
@@ -81,6 +94,8 @@ const defaultPinterestSettings: PinterestSafeModeSettings = {
 
 const whisperModelStorageKey = 'clipforge.whisperModelPath';
 const saveFolderStorageKey = 'clipforge.saveFolder';
+const downloadConcurrencyStorageKey = 'clipforge.downloadConcurrency';
+const filenameTemplateStorageKey = 'clipforge.filenameTemplate';
 
 function App() {
   const [activeSection, setActiveSection] = useState<Section>('youtube');
@@ -101,6 +116,11 @@ function App() {
   const [pinterestRateState, setPinterestRateState] = useState<PinterestRateLimitState | null>(null);
   const [whisperModelPath, setWhisperModelPath] = useState(() => window.localStorage.getItem(whisperModelStorageKey) ?? '');
   const [defaultSaveFolder, setDefaultSaveFolder] = useState(() => window.localStorage.getItem(saveFolderStorageKey) ?? '');
+  const [downloadConcurrency, setDownloadConcurrency] = useState(() => {
+    const stored = Number(window.localStorage.getItem(downloadConcurrencyStorageKey));
+    return Number.isInteger(stored) && stored >= 1 && stored <= 3 ? stored : 1;
+  });
+  const [filenameTemplate, setFilenameTemplate] = useState(() => window.localStorage.getItem(filenameTemplateStorageKey) ?? '');
   const [saveFolderOverride, setSaveFolderOverride] = useState('');
   const [status, setStatus] = useState('Paste a URL to begin.');
   const [error, setError] = useState('');
@@ -108,6 +128,10 @@ function App() {
   const [progress, setProgress] = useState<DownloadProgress>({ status: 'idle' });
   const [result, setResult] = useState<DownloadResult | null>(null);
   const [pendingExtensionRequest, setPendingExtensionRequest] = useState<ExtensionDownloadRequest | null>(null);
+  const [ytdlpUpdate, setYtdlpUpdate] = useState<YtDlpUpdateInfo | null>(null);
+  const [downloadHistory, setDownloadHistory] = useState<DownloadHistoryEntry[]>([]);
+  const [queueState, setQueueState] = useState<DownloadQueueState>({ activeDownloadId: null, pendingCount: 0 });
+  const [watchSubscriptions, setWatchSubscriptions] = useState<WatchSubscription[]>([]);
   const lastAutoAnalyzedUrl = useRef('');
   const analyzeRunId = useRef(0);
   const activeAnalysisUrl = useRef('');
@@ -132,6 +156,30 @@ function App() {
       }
     });
 
+    const unsubscribeYtDlpUpdate =
+      typeof window.clipForge.onYtDlpUpdateAvailable === 'function'
+        ? window.clipForge.onYtDlpUpdateAvailable((info) => setYtdlpUpdate(info))
+        : () => {};
+
+    if (typeof window.clipForge.getDownloadHistory === 'function') {
+      void window.clipForge.getDownloadHistory().then(setDownloadHistory);
+    }
+    if (typeof window.clipForge.listWatchSubscriptions === 'function') {
+      void window.clipForge.listWatchSubscriptions().then(setWatchSubscriptions);
+    }
+    const unsubscribeHistory =
+      typeof window.clipForge.onDownloadHistoryChanged === 'function'
+        ? window.clipForge.onDownloadHistoryChanged(setDownloadHistory)
+        : () => {};
+    const unsubscribeQueue =
+      typeof window.clipForge.onDownloadQueueChanged === 'function'
+        ? window.clipForge.onDownloadQueueChanged(setQueueState)
+        : () => {};
+    const unsubscribeWatches =
+      typeof window.clipForge.onWatchSubscriptionsChanged === 'function'
+        ? window.clipForge.onWatchSubscriptionsChanged(setWatchSubscriptions)
+        : () => {};
+
     const unsubscribeThumbnail =
       typeof window.clipForge.onMediaThumbnail === 'function'
         ? window.clipForge.onMediaThumbnail((update) => {
@@ -146,6 +194,10 @@ function App() {
       unsubscribeProgress();
       unsubscribeComplete();
       unsubscribeThumbnail();
+      unsubscribeYtDlpUpdate();
+      unsubscribeHistory();
+      unsubscribeQueue();
+      unsubscribeWatches();
     };
   }, []);
 
@@ -174,6 +226,21 @@ function App() {
       window.localStorage.removeItem(saveFolderStorageKey);
     }
   }, [defaultSaveFolder]);
+
+  useEffect(() => {
+    window.localStorage.setItem(downloadConcurrencyStorageKey, String(downloadConcurrency));
+    if (typeof window.clipForge.setDownloadConcurrency === 'function') {
+      void window.clipForge.setDownloadConcurrency(downloadConcurrency);
+    }
+  }, [downloadConcurrency]);
+
+  useEffect(() => {
+    if (filenameTemplate) {
+      window.localStorage.setItem(filenameTemplateStorageKey, filenameTemplate);
+    } else {
+      window.localStorage.removeItem(filenameTemplateStorageKey);
+    }
+  }, [filenameTemplate]);
 
   const saveFolder = saveFolderOverride || defaultSaveFolder;
 
@@ -217,16 +284,16 @@ function App() {
   const blockingMissingDependencies = dependencies.filter((dependency) => !dependency.available && !dependency.optional);
   const qualityOptions = useMemo(() => getQualityOptions(media), [media]);
   const subtitleOptions = useMemo(() => getSubtitleOptions(media), [media]);
-  const sourceCaptionsAvailable = hasSourceCaptions(media);
-  const captionsAvailable = Boolean(media?.isPlaylist) || sourceCaptionsAvailable;
   const isVideoDownloadSection =
     activeSection === 'youtube' ||
     activeSection === 'tiktok' ||
-    activeSection === 'x' ||
+    activeSection === 'twitch' ||
+    (activeSection === 'x' && galleryMedia === null) ||
     (activeSection === 'instagram' && galleryMedia === null) ||
-    (activeSection === 'facebook' && media !== null);
-  const hasGallery = Boolean(galleryMedia && activeSection !== 'youtube' && activeSection !== 'tiktok');
-  const canDownloadVideo = Boolean(media && saveFolder && outputTypes.length > 0 && !downloadId && hasTool('yt-dlp', dependencies));
+    (activeSection === 'facebook' && media !== null) ||
+    (activeSection === 'reddit' && media !== null);
+  const hasGallery = Boolean(galleryMedia && activeSection !== 'youtube' && activeSection !== 'tiktok' && activeSection !== 'twitch');
+  const canDownloadVideo = Boolean(media && saveFolder && outputTypes.length > 0 && hasTool('yt-dlp', dependencies));
   const canDownloadGallery = Boolean(galleryMedia && saveFolder && !downloadId && hasTool(galleryMedia.rawTool, dependencies));
 
   function goHome() {
@@ -262,10 +329,10 @@ function App() {
     if (platform === 'pinterest' && pinterestSettings.cookieMode === 'none') {
       return 'none';
     }
-    // Instagram and Facebook require login for most photo/album metadata;
+    // Instagram, Facebook, and X require login for most photo metadata;
     // default to Brave cookies (matching the Pinterest approach) when no
     // cookie source is configured.
-    if ((platform === 'instagram' || platform === 'facebook') && cookieSource === 'none' && !cookieFilePath) {
+    if ((platform === 'instagram' || platform === 'facebook' || platform === 'x') && cookieSource === 'none' && !cookieFilePath) {
       return 'brave';
     }
     return cookieSource;
@@ -279,10 +346,40 @@ function App() {
   }
 
   function pasteAndDownload(targetUrl: string) {
+    // Pasting several links at once queues them all as a batch.
+    const urls = extractUrls(targetUrl);
+    if (urls.length > 1) {
+      void startBatch(urls);
+      return;
+    }
     const trimmedUrl = targetUrl.trim();
     lastAutoAnalyzedUrl.current = trimmedUrl;
     setUrl(trimmedUrl);
     void analyze(trimmedUrl, true);
+  }
+
+  async function startBatch(urls: string[]) {
+    if (!saveFolder) {
+      setError('Choose a default download folder in Settings before batch downloading.');
+      return;
+    }
+    setError('');
+    setResult(null);
+    try {
+      const { queued } = await window.clipForge.startBatchDownload(urls, {
+        outputTypes,
+        outputPath: saveFolder,
+        subtitleLanguage,
+        cookieSource,
+        cookieFilePath: cookieFilePath || undefined,
+        whisperModelPath: whisperModelPath || undefined,
+        outputTemplate: filenameTemplate || undefined
+      });
+      setActiveSection('downloads');
+      setStatus(`Queued ${queued} download${queued === 1 ? '' : 's'}.`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
   }
 
   async function analyze(targetUrl = url.trim(), autoDownload = false) {
@@ -306,12 +403,15 @@ function App() {
       if (
         detected.platform === 'youtube' ||
         detected.platform === 'tiktok' ||
-        detected.platform === 'x' ||
+        detected.platform === 'twitch' ||
         (detected.platform === 'instagram' && detected.intent === 'instagram-video')
       ) {
         const info = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
         if (detected.platform === 'tiktok' && !hasVideoFormats(info)) {
           throw new Error('The TikTok section is currently focused on videos.');
+        }
+        if (detected.platform === 'twitch' && !hasVideoFormats(info)) {
+          throw new Error('Twitch did not provide a downloadable video or clip for this URL.');
         }
         if (currentRunId !== analyzeRunId.current) {
           return;
@@ -323,6 +423,76 @@ function App() {
         if (autoDownload) {
           await startAnalyzedVideoDownload(info, targetUrl, preferredLanguage);
           return;
+        }
+      } else if (detected.platform === 'x') {
+        // Video tweets get the yt-dlp workflow; image/carousel tweets fall
+        // back to the selectable gallery grid via gallery-dl.
+        try {
+          const info = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
+          if (!hasVideoFormats(info) || !isNativeTwitterVideo(info)) {
+            throw new Error('This tweet has no video.');
+          }
+          if (currentRunId !== analyzeRunId.current) {
+            return;
+          }
+          setMedia(info);
+          setQualityId('best');
+          const preferredLanguage = preferredSubtitleLanguage(info);
+          setSubtitleLanguage(preferredLanguage);
+          if (autoDownload) {
+            await startAnalyzedVideoDownload(info, targetUrl, preferredLanguage);
+            return;
+          }
+        } catch {
+          const info = await window.clipForge.analyzeMedia(
+            targetUrl,
+            effectiveCookieSource('x'),
+            effectiveCookieFilePath('x')
+          );
+          if (currentRunId !== analyzeRunId.current) {
+            return;
+          }
+          setGalleryMedia(info);
+          setSelectedItems(info.items.map((item) => item.index));
+          if (autoDownload) {
+            await startAnalyzedGalleryDownload(info);
+            return;
+          }
+        }
+      } else if (detected.platform === 'reddit') {
+        // Reddit v.redd.it video posts use the yt-dlp workflow; image and
+        // gallery posts fall back to the selectable gallery grid via gallery-dl.
+        try {
+          const info = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
+          if (!hasVideoFormats(info)) {
+            throw new Error('This Reddit post has no video.');
+          }
+          if (currentRunId !== analyzeRunId.current) {
+            return;
+          }
+          setMedia(info);
+          setQualityId('best');
+          const preferredLanguage = preferredSubtitleLanguage(info);
+          setSubtitleLanguage(preferredLanguage);
+          if (autoDownload) {
+            await startAnalyzedVideoDownload(info, targetUrl, preferredLanguage);
+            return;
+          }
+        } catch {
+          const info = await window.clipForge.analyzeMedia(
+            targetUrl,
+            effectiveCookieSource('reddit'),
+            effectiveCookieFilePath('reddit')
+          );
+          if (currentRunId !== analyzeRunId.current) {
+            return;
+          }
+          setGalleryMedia(info);
+          setSelectedItems(info.items.map((item) => item.index));
+          if (autoDownload) {
+            await startAnalyzedGalleryDownload(info);
+            return;
+          }
         }
       } else if (detected.platform === 'instagram') {
         // Instagram /p/ posts: photos and carousels analyze as a gallery;
@@ -438,9 +608,6 @@ function App() {
     if (!saveFolder) {
       throw new Error('Choose a default download folder in Settings before pasting a URL for automatic download.');
     }
-    if (downloadId) {
-      throw new Error('A download is already active.');
-    }
 
     setProgress({ status: 'starting', message: 'Starting automatic download...' });
     setStatus('Starting automatic download...');
@@ -451,7 +618,8 @@ function App() {
         subtitleLanguage: language,
         cookieSource,
         cookieFilePath,
-        whisperModelPath
+        whisperModelPath,
+        outputTemplate: filenameTemplate || undefined
       })
     );
     setDownloadId(started.downloadId);
@@ -472,6 +640,7 @@ function App() {
       platform: info.platform,
       tool: info.rawTool,
       outputPath: saveFolder,
+      thumbnail: info.thumbnail,
       manifestId: info.manifestId,
       cookieSource: effectiveCookieSource(info.platform),
       cookieFilePath: effectiveCookieFilePath(info.platform),
@@ -514,7 +683,8 @@ function App() {
           cookieSource,
           cookieFilePath,
           whisperModelPath,
-          qualityId
+          qualityId,
+          outputTemplate: filenameTemplate || undefined
         })
       );
       setDownloadId(started.downloadId);
@@ -526,11 +696,6 @@ function App() {
   }
 
   function applyExtensionFormat(request: ExtensionDownloadRequest) {
-    if (downloadId) {
-      setError('A download is already active. Try the extension again after it finishes.');
-      return;
-    }
-
     const formats = extensionRequestFormats(request);
     if (formats.length === 0) {
       setError('The extension did not provide a usable format selection.');
@@ -565,7 +730,14 @@ function App() {
       const detected = await window.clipForge.detectPlatform(request.url);
       setActiveSection(detected.platform === 'unknown' ? 'unknown' : detected.platform);
 
-      if (detected.platform === 'youtube' || detected.platform === 'instagram' || detected.platform === 'tiktok' || detected.platform === 'x') {
+      if (
+        detected.platform === 'youtube' ||
+        detected.platform === 'instagram' ||
+        detected.platform === 'tiktok' ||
+        detected.platform === 'x' ||
+        detected.platform === 'twitch' ||
+        detected.platform === 'reddit'
+      ) {
         const info = await window.clipForge.analyzeUrl(request.url, cookieSource, cookieFilePath || undefined);
         if (detected.platform === 'instagram' && !hasVideoFormats(info)) {
           throw new Error(`${selectionLabel} cannot be downloaded from this Instagram gallery post.`);
@@ -584,8 +756,13 @@ function App() {
             cookieFilePath,
             whisperModelPath,
             forceOverwrite: true,
-            clipRange: extensionClipRange(request)
-          })
+            clipRange: extensionClipRange(request),
+            clipCrop: request.crop,
+            burnCaptions: request.burnCaptions,
+            captionStyle: request.captionStyle,
+            outputTemplate: filenameTemplate || undefined
+          }),
+          'extension'
         );
         setDownloadId(started.downloadId);
         setProgress({ status: 'starting', message: `Starting ${selectionLabel}...` });
@@ -606,8 +783,11 @@ function App() {
               cookieSource,
               cookieFilePath,
               whisperModelPath,
-              forceOverwrite: true
-            })
+              forceOverwrite: true,
+              captionStyle: request.captionStyle,
+              outputTemplate: filenameTemplate || undefined
+            }),
+            'extension'
           );
           setDownloadId(started.downloadId);
           setProgress({ status: 'starting', message: `Starting ${selectionLabel}...` });
@@ -659,6 +839,7 @@ function App() {
         platform: galleryMedia.platform,
         tool: galleryMedia.rawTool,
         outputPath: saveFolder,
+        thumbnail: galleryMedia.thumbnail,
         selectedItems: selected,
         selectedItemIds,
         manifestId: galleryMedia.manifestId,
@@ -710,6 +891,7 @@ function App() {
         platform: 'pinterest',
         tool: 'gallery-dl',
         outputPath: saveFolder,
+        thumbnail: galleryMedia.thumbnail,
         manifestId: galleryMedia.manifestId,
         retryFailed: true,
         cookieSource: effectiveCookieSource('pinterest'),
@@ -752,6 +934,9 @@ function App() {
   const detectedPlatform = platformSections.find((section) => section.id === activeSection);
   const OutputHeadingIcon = looksLikeUrl(url.trim()) && detectedPlatform ? detectedPlatform.icon : SelectedIcon;
   const needsQuality = isVideoDownloadSection && outputTypes.some((type) => type === 'mp4' || type === 'webm');
+  // "Home" is any platform view (not the Downloads/Settings/Watch tabs) — there
+  // the title click is a no-op, so it should not show the clickable hover style.
+  const isHome = activeSection !== 'downloads' && activeSection !== 'settings' && activeSection !== 'watch';
   return (
     <main className="app-shell">
       <section className="topbar">
@@ -765,11 +950,32 @@ function App() {
               <span className="brand-facebook" title="Facebook"><Facebook size={12} /></span>
               <span className="brand-pinterest" title="Pinterest"><PinterestIcon size={12} /></span>
               <span className="brand-x" title="X / Twitter"><XIcon size={11} /></span>
+              <span className="brand-reddit" title="Reddit"><RedditIcon size={12} /></span>
+              <span className="brand-twitch" title="Twitch"><Twitch size={12} /></span>
             </div>
           </div>
-          <h1>Social Media Downloader</h1>
+          <h1>
+            <button
+              type="button"
+              className={`app-title-button ${isHome ? 'is-home' : ''}`}
+              onClick={goHome}
+              disabled={isHome}
+              title={isHome ? undefined : 'Go home'}
+              aria-label="Go home"
+            >
+              Social Media Downloader
+            </button>
+          </h1>
         </div>
         <div className="topbar-actions">
+          <button
+            className={`icon-button ${activeSection === 'watch' ? 'selected' : ''}`}
+            onClick={() => setActiveSection('watch')}
+            title="Watch folders"
+            aria-label="Watch folders"
+          >
+            <Folder size={21} />
+          </button>
           <button
             className={`icon-button ${activeSection === 'downloads' ? 'selected' : ''}`}
             onClick={() => setActiveSection('downloads')}
@@ -787,7 +993,7 @@ function App() {
             <Settings size={21} />
           </button>
           <button
-            className={`icon-button ${activeSection !== 'downloads' && activeSection !== 'settings' ? 'selected' : ''}`}
+            className={`icon-button ${activeSection !== 'downloads' && activeSection !== 'settings' && activeSection !== 'watch' ? 'selected' : ''}`}
             onClick={goHome}
             title="Home"
             aria-label="Home"
@@ -810,6 +1016,33 @@ function App() {
                 <li key={dependency.name}>{dependency.message}</li>
               ))}
             </ul>
+          </div>
+        </section>
+      )}
+
+      {ytdlpUpdate?.updateAvailable && (
+        <section className="setup-message">
+          <AlertCircle size={22} />
+          <div>
+            <h2>yt-dlp update available</h2>
+            <p>
+              Installed {ytdlpUpdate.current}, latest {ytdlpUpdate.latest}. Updating keeps YouTube and other downloads
+              working when sites change.
+            </p>
+            <div className="action-row">
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setYtdlpUpdate(null);
+                  void updateTool('yt-dlp');
+                }}
+              >
+                Update yt-dlp
+              </button>
+              <button className="secondary-button" onClick={() => setYtdlpUpdate(null)}>
+                Dismiss
+              </button>
+            </div>
           </div>
         </section>
       )}
@@ -839,11 +1072,38 @@ function App() {
           defaultSaveFolder={defaultSaveFolder}
           onChooseDefaultFolder={chooseDefaultFolder}
           onClearDefaultFolder={() => setDefaultSaveFolder('')}
+          downloadConcurrency={downloadConcurrency}
+          onDownloadConcurrencyChange={setDownloadConcurrency}
+          filenameTemplate={filenameTemplate}
+          onFilenameTemplateChange={setFilenameTemplate}
+        />
+      ) : activeSection === 'watch' ? (
+        <WatchPanel
+          watches={watchSubscriptions}
+          saveFolder={saveFolder || undefined}
+          onAddWatch={async (input: WatchSubscriptionInput) => {
+            setWatchSubscriptions(await window.clipForge.addWatchSubscription(input));
+          }}
+          onUpdateWatch={(id, patch) => void window.clipForge.updateWatchSubscription(id, patch).then(setWatchSubscriptions)}
+          onRemoveWatch={(id) => void window.clipForge.removeWatchSubscription(id).then(setWatchSubscriptions)}
+          onSyncWatch={(id) => void window.clipForge.syncWatchSubscriptionNow(id).then(setWatchSubscriptions)}
+          onOpenPath={(path) => void window.clipForge.openPath(path)}
+          onChooseFolder={() => window.clipForge.chooseFolder()}
         />
       ) : activeSection === 'downloads' ? (
-        <section className="workspace single-column">
-          <ProgressPanel progress={progress} result={result} saveFolder={saveFolder || undefined} onOpenFolder={(path) => window.clipForge.openPath(path)} />
-        </section>
+        <DownloadsPanel
+          progress={progress}
+          result={result}
+          saveFolder={saveFolder || undefined}
+          queue={queueState}
+          history={downloadHistory}
+          onCancelAll={() => void window.clipForge.cancelAllDownloads()}
+          onRedownload={(entry) => pasteAndDownload(entry.url)}
+          onRemoveEntry={(id) => void window.clipForge.removeDownloadHistoryEntry(id).then(setDownloadHistory)}
+          onClearHistory={() => void window.clipForge.clearDownloadHistory().then(setDownloadHistory)}
+          onOpenPath={(path) => void window.clipForge.openPath(path)}
+          onShowInFolder={(path) => void window.clipForge.showInFolder(path)}
+        />
       ) : (
         <section className="workspace">
           <div className="primary-column">
@@ -901,9 +1161,13 @@ function App() {
                     ? 'Facebook photos and albums download via gallery-dl. Paste a video URL to get MP4/MP3/WAV format controls.'
                     : activeSection === 'instagram'
                       ? 'Instagram photos and carousels download via gallery-dl. Paste a reel or video URL to get MP4/MP3/WAV format controls.'
-                      : activeSection === 'pinterest'
-                        ? 'Pinterest pins, boards, and sections use gallery-dl.'
-                        : 'General URLs try yt-dlp first, then gallery-dl.'}
+                      : activeSection === 'x'
+                        ? 'Image tweets download via gallery-dl, using your browser (Brave) cookies for login-gated posts. Paste a video tweet to get MP4/MP3/WAV format controls.'
+                        : activeSection === 'pinterest'
+                          ? 'Pinterest pins, boards, and sections use gallery-dl.'
+                          : activeSection === 'reddit'
+                            ? 'Reddit image and gallery posts download via gallery-dl. Paste a v.redd.it video post to get MP4/MP3/WAV format controls.'
+                            : 'General URLs try yt-dlp first, then gallery-dl.'}
                 </p>
               </section>
             )}
@@ -985,6 +1249,14 @@ function PinterestIcon({ size = 24, className }: { size?: number; className?: st
   );
 }
 
+function RedditIcon({ size = 24, className }: { size?: number; className?: string }) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0Zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.745-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701ZM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249Zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249Zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095Z" />
+    </svg>
+  );
+}
+
 function XIcon({ size = 24, className }: { size?: number; className?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1016,7 +1288,11 @@ function SettingsPanel({
   onClearWhisperModel,
   defaultSaveFolder,
   onChooseDefaultFolder,
-  onClearDefaultFolder
+  onClearDefaultFolder,
+  downloadConcurrency,
+  onDownloadConcurrencyChange,
+  filenameTemplate,
+  onFilenameTemplateChange
 }: {
   dependencies: DependencyStatus[];
   cookieSource: CookieSource;
@@ -1041,6 +1317,10 @@ function SettingsPanel({
   defaultSaveFolder: string;
   onChooseDefaultFolder: () => void;
   onClearDefaultFolder: () => void;
+  downloadConcurrency: number;
+  onDownloadConcurrencyChange: (n: number) => void;
+  filenameTemplate: string;
+  onFilenameTemplateChange: (template: string) => void;
 }) {
   function updatePinterestSetting<K extends keyof PinterestSafeModeSettings>(key: K, value: PinterestSafeModeSettings[K]) {
     onPinterestSettingsChange({ ...pinterestSettings, [key]: value });
@@ -1091,6 +1371,36 @@ function SettingsPanel({
               Clear
             </button>
           </div>
+        </section>
+        <section className="pinterest-settings">
+          <div className="panel-heading">
+            <Download size={20} />
+            <div>
+              <h2>Downloads</h2>
+              <p>Control how many downloads run at once and how downloaded files are named.</p>
+            </div>
+          </div>
+          <label className="field-label">
+            Parallel downloads
+            <select value={downloadConcurrency} onChange={(event) => onDownloadConcurrencyChange(Number(event.target.value))}>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+            </select>
+            <span className="hint">How many downloads run at the same time. Pinterest downloads always run one at a time.</span>
+          </label>
+          <label className="field-label">
+            Filename template
+            <input
+              type="text"
+              value={filenameTemplate}
+              placeholder="{title}"
+              onChange={(event) => onFilenameTemplateChange(event.target.value)}
+            />
+            <span className="hint">
+              Supported placeholders: {'{title}'} {'{uploader}'} {'{date}'} {'{id}'}. Leave blank for the default filename.
+            </span>
+          </label>
         </section>
         <section className="pinterest-settings">
           <div className="panel-heading">
@@ -1279,6 +1589,10 @@ function errorMessage(caught: unknown): string {
   return 'Something went wrong.';
 }
 
+function extractUrls(text: string): string[] {
+  return [...new Set(text.split(/[\s,]+/).map((part) => part.trim()).filter(looksLikeUrl))];
+}
+
 function looksLikeUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
@@ -1299,6 +1613,15 @@ function hasVideoFormats(media: MediaInfo): boolean {
   return media.formats.some((format) => format.vcodec && format.vcodec !== 'none');
 }
 
+// When a tweet has no native video, yt-dlp silently falls back to its generic
+// extractor, which can resolve an unrelated video embedded on the page (for
+// example a linked YouTube clip). Only treat a result as a real X video when it
+// came from X's own extractor; otherwise the tweet is image-only and should use
+// the gallery (cookie-aware) photo grid.
+function isNativeTwitterVideo(media: MediaInfo): boolean {
+  return (media.extractor ?? '').toLowerCase().includes('twitter');
+}
+
 function buildVideoDownloadRequest(
   media: MediaInfo,
   fallbackUrl: string,
@@ -1312,6 +1635,10 @@ function buildVideoDownloadRequest(
     qualityId?: string;
     forceOverwrite?: boolean;
     clipRange?: ClipRange;
+    clipCrop?: ClipCrop;
+    burnCaptions?: boolean;
+    captionStyle?: CaptionStyle;
+    outputTemplate?: string;
   }
 ): DownloadRequest {
   return {
@@ -1319,6 +1646,7 @@ function buildVideoDownloadRequest(
     outputTypes: options.outputTypes,
     outputPath: options.outputPath,
     mediaTitle: media.title,
+    mediaThumbnail: media.thumbnail,
     qualityId: options.qualityId ?? 'best',
     subtitleLanguage: options.subtitleLanguage,
     cookieSource: options.cookieSource,
@@ -1329,7 +1657,11 @@ function buildVideoDownloadRequest(
     extractor: media.extractor,
     whisperModelPath: options.whisperModelPath || undefined,
     forceOverwrite: options.forceOverwrite,
-    clipRange: options.clipRange
+    clipRange: options.clipRange,
+    clipCrop: options.clipCrop,
+    burnCaptions: options.burnCaptions,
+    captionStyle: options.captionStyle,
+    outputTemplate: options.outputTemplate
   };
 }
 

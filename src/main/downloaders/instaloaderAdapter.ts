@@ -2,7 +2,11 @@ import type { GalleryDownloadRequest } from '../../shared/media.js';
 
 export function buildInstaloaderDownloadArgs(request: GalleryDownloadRequest): string[] {
   const shortcode = instagramShortcode(request.url);
-  return shortcode ? ['--dirname-pattern', request.outputPath, '--', `-${shortcode}`] : ['--dirname-pattern', request.outputPath, request.url];
+  // Always end options with `--` so neither the shortcode nor the URL (untrusted
+  // positionals that could begin with `-`) is parsed as an instaloader flag.
+  return shortcode
+    ? ['--dirname-pattern', request.outputPath, '--', `-${shortcode}`]
+    : ['--dirname-pattern', request.outputPath, '--', request.url];
 }
 
 function instagramShortcode(url: string): string | null {

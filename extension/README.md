@@ -34,7 +34,30 @@ player controls next to the settings gear.
 3. Or type times (`1:23`, `1:02:03.5`) in the Start/End fields, or click
    **Set** to grab the current playhead position.
 4. **Preview** plays just the selected range in the player.
-5. Choose a saved preset (or direct MP4/MP3) and click **Send to ClipForge**.
+5. Choose a saved preset (or direct MP4/MP3/GIF) and click **Send to ClipForge**.
+
+While the panel is open these keyboard shortcuts work (outside text fields):
+
+- `[` / `]` — set the clip start/end to the current playhead
+- `←` / `→` — slide the whole selection by 1s (0.1s with Shift), seeking to the new start
+- `Enter` — Send to ClipForge
+- `Esc` — close the panel
+
+The **Reels/TikTok**, **Shorts**, and **X** buttons apply per-platform export
+defaults (9:16 crop + burned captions for Reels/Shorts, original aspect for X)
+and warn or clamp when the selection exceeds the platform's length limit
+(90s Reels, 60s Shorts, 140s X).
+
+## Other Sites
+
+On Twitch, Vimeo, and Reddit a small floating scissor button appears over the
+main video; clicking it opens the same clip panel (without progress-bar
+markers or transcript search). The current page URL is sent to the desktop
+app, which handles those sites via yt-dlp.
+
+You can also right-click any link, video, or page and choose
+**Download with ClipForge** to send its URL as an MP4 download; a browser
+notification reports the result.
 
 The desktop app downloads only the selected section using yt-dlp
 `--download-sections` with keyframe-accurate cuts, saved with a

@@ -1,17 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { BrowserWindow } from 'electron';
-import type { ExtensionBridgeConfig, ExtensionDownloadRequest, FormatPreset, OutputType } from '../shared/media.js';
+import type { CaptionStyle, ExtensionBridgeConfig, ExtensionDownloadRequest, FormatPreset, OutputType } from '../shared/media.js';
+import { fetchTranscriptSegments } from './transcriptService.js';
 
 const bridgeHost = '127.0.0.1';
 export const extensionBridgePort = 38473;
-const allowedExtensionFormats = new Set<ExtensionDownloadRequest['format']>(['mp4', 'mp3', 'markdown']);
+const allowedExtensionFormats = new Set<ExtensionDownloadRequest['format']>(['mp4', 'mp3', 'markdown', 'gif']);
 const allowedOutputTypes = new Set<OutputType>([
   'mp4',
   'webm',
   'mp3',
   'wav',
   'm4a',
+  'gif',
   'subtitles',
   'timed-transcript',
   'markdown'
@@ -59,8 +61,25 @@ export function stopExtensionBridge(): Promise<void> {
 }
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  // Reject requests whose Host header is not the loopback bridge address. Combined with
+  // the Origin check below this blocks DNS-rebinding attacks, where a malicious website
+  // resolves its own domain to 127.0.0.1 to reach this local server from the browser.
+  if (!isAllowedBridgeHost(request.headers.host)) {
+    sendJson(response, 403, { error: 'This bridge only accepts local requests.' });
+    return;
+  }
+
   const origin = request.headers.origin;
   if (origin && !isAllowedExtensionOrigin(origin)) {
+    sendJson(response, 403, { error: 'This bridge only accepts browser-extension requests.' });
+    return;
+  }
+
+  // State-changing routes require a real browser-extension Origin. Browsers
+  // always attach Origin on cross-origin requests, so this blocks both websites
+  // and non-browser local processes (curl, scripts) that omit it from forging a
+  // download or transcript request.
+  if (request.method === 'POST' && !isAllowedExtensionOrigin(origin ?? '')) {
     sendJson(response, 403, { error: 'This bridge only accepts browser-extension requests.' });
     return;
   }
@@ -91,6 +110,30 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
 
+  if (request.method === 'POST' && request.url === '/transcript') {
+    try {
+      const body = (await readJsonBody(request)) as { url?: unknown };
+      if (typeof body.url !== 'string' || !isHttpUrl(body.url)) {
+        throw new BridgeRequestError(400, 'The transcript request needs a valid HTTP or HTTPS URL.');
+      }
+      const segments = await fetchTranscriptSegments(
+        body.url.trim(),
+        config?.subtitleLanguage || 'en.*',
+        config?.cookieSource ?? 'none',
+        config?.cookieFilePath,
+        // Use the whisper model the user loaded in Settings → Transcripts for
+        // the caption-less fallback, matching the rest of the app.
+        config?.whisperModelPath || undefined
+      );
+      sendJson(response, 200, { segments });
+    } catch (caught) {
+      const status = caught instanceof BridgeRequestError ? caught.status : 400;
+      const message = caught instanceof Error ? caught.message : 'Transcript fetch failed.';
+      sendJson(response, status, { error: message });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && request.url === '/download') {
     try {
       const body = await readJsonBody(request);
@@ -104,9 +147,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       if (!config?.saveFolder) {
         throw new BridgeRequestError(409, 'Choose a save folder in ClipForge before using the extension.');
       }
-      if (config.downloadActive) {
-        throw new BridgeRequestError(409, 'A ClipForge download is already active.');
-      }
+      // Concurrent requests are fine: the desktop app queues downloads.
       if (!mainWindow || mainWindow.isDestroyed()) {
         throw new BridgeRequestError(503, 'ClipForge is not ready.');
       }
@@ -157,12 +198,33 @@ function parseDownloadRequest(value: unknown): ExtensionDownloadRequest {
     throw new BridgeRequestError(400, 'Invalid URL source.');
   }
   const clip = parseClipRange(request.clipStart, request.clipEnd);
+  const captionStyle = parseCaptionStyle(request.captionStyle);
   return {
     url: request.url.trim(),
     ...(hasFormat ? { format: request.format as ExtensionDownloadRequest['format'] } : { presetId: request.presetId }),
     source: request.source,
-    ...(clip ?? {})
+    ...(clip ?? {}),
+    ...(request.crop === 'vertical' ? { crop: 'vertical' as const } : {}),
+    ...(request.burnCaptions === true ? { burnCaptions: true } : {}),
+    ...(captionStyle ? { captionStyle } : {})
   };
+}
+
+// Keeps only the recognized caption-style values; invalid fields are dropped
+// rather than rejected so older/newer extensions stay compatible.
+function parseCaptionStyle(value: unknown): CaptionStyle | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const raw = value as { size?: unknown; position?: unknown };
+  const style: CaptionStyle = {};
+  if (raw.size === 'small' || raw.size === 'medium' || raw.size === 'large') {
+    style.size = raw.size;
+  }
+  if (raw.position === 'top' || raw.position === 'middle' || raw.position === 'bottom') {
+    style.position = raw.position;
+  }
+  return style.size || style.position ? style : undefined;
 }
 
 function parseClipRange(start: unknown, end: unknown): Pick<ExtensionDownloadRequest, 'clipStart' | 'clipEnd'> | null {
@@ -202,6 +264,15 @@ function isHttpUrl(value: string): boolean {
 
 function isAllowedExtensionOrigin(origin: string): boolean {
   return origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
+}
+
+function isAllowedBridgeHost(host: string | undefined): boolean {
+  if (!host) {
+    return false;
+  }
+  // Only the literal loopback IP the server binds to — not "localhost", which
+  // can resolve to a DNS-controlled address and weaken anti-rebinding.
+  return host.toLowerCase() === `${bridgeHost}:${extensionBridgePort}`;
 }
 
 function applyCorsHeaders(response: ServerResponse, origin?: string): void {

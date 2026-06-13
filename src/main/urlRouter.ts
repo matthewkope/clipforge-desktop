@@ -18,8 +18,25 @@ export function detectPlatform(input: string): Platform {
     if (hostname === 'pinterest.com' || hostname.endsWith('.pinterest.com') || hostname === 'pin.it') {
       return 'pinterest';
     }
-    if (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) {
+    if (
+      hostname === 'x.com' ||
+      hostname.endsWith('.x.com') ||
+      hostname === 'twitter.com' ||
+      hostname.endsWith('.twitter.com') ||
+      hostname === 't.co' // Twitter/X link shortener (mobile share links)
+    ) {
       return 'x';
+    }
+    if (
+      hostname === 'reddit.com' ||
+      hostname.endsWith('.reddit.com') ||
+      hostname === 'redd.it' ||
+      hostname.endsWith('.redd.it') // v.redd.it/i.redd.it direct media hosts
+    ) {
+      return 'reddit';
+    }
+    if (hostname === 'twitch.tv' || hostname.endsWith('.twitch.tv')) {
+      return 'twitch';
     }
   } catch {
     return 'unknown';
@@ -85,6 +102,26 @@ export function detectMediaIntent(input: string): MediaIntent {
       return 'unknown';
     case 'x':
       return 'x-video';
+    case 'reddit': {
+      const hostname = parsed.hostname.toLowerCase().replace(/^www\./u, '');
+      // Best effort: comment threads and direct v.redd.it links usually carry
+      // the post's video; everything else is treated as a generic post.
+      if (hostname === 'v.redd.it' || path.includes('/comments/') || path.includes('/video/')) {
+        return 'reddit-video';
+      }
+      return 'reddit-post';
+    }
+    case 'twitch': {
+      const hostname = parsed.hostname.toLowerCase().replace(/^www\./u, '');
+      if (hostname === 'clips.twitch.tv' || path.includes('/clip/')) {
+        return 'twitch-clip';
+      }
+      if (path.includes('/videos/')) {
+        return 'twitch-video';
+      }
+      // Channel/live URLs still point at video content.
+      return 'twitch-video';
+    }
     case 'unknown':
       return 'unknown';
   }

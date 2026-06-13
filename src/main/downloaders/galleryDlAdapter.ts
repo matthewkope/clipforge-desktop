@@ -26,7 +26,7 @@ export class GalleryDlError extends Error {
 }
 
 export async function analyzeWithGalleryDl(url: string, cookieSource: CookieSource = 'none', cookieFilePath?: string): Promise<MediaAnalyzerResult> {
-  const args = [...galleryCookieArgs(cookieSource, cookieFilePath), '-J', url];
+  const args = [...galleryCookieArgs(cookieSource, cookieFilePath), '-J', '--', url];
   const result = await runGalleryDl(args, 90_000);
   const rawJson = parseGalleryJson(result.stdout);
   const extractionError = findExtractionError(rawJson);
@@ -70,7 +70,7 @@ export function buildGalleryDlDownloadArgs(request: GalleryDownloadRequest): str
   if (request.selectedItems?.length) {
     args.push('--range', buildRange(request.selectedItems));
   }
-  args.push('-d', request.outputPath, request.url);
+  args.push('-d', request.outputPath, '--', request.url);
   return args;
 }
 
@@ -188,7 +188,40 @@ function parseGalleryJson(output: string): unknown {
   }
 }
 
+// gallery-dl -J emits an array of [messageType, ...] tuples where type 3 is a
+// downloadable file: [3, "https://...", {metadata}]. Prefer those over the
+// heuristic object walk, which can pick up avatars and card metadata.
+function galleryDlFileEntries(raw: unknown): Array<{ url: string; metadata: Record<string, unknown> }> {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const entries: Array<{ url: string; metadata: Record<string, unknown> }> = [];
+  for (const entry of raw) {
+    if (Array.isArray(entry) && entry[0] === 3 && typeof entry[1] === 'string' && /^https?:/i.test(entry[1])) {
+      const metadata = entry[2] && typeof entry[2] === 'object' ? (entry[2] as Record<string, unknown>) : {};
+      entries.push({ url: entry[1], metadata });
+    }
+  }
+  return entries;
+}
+
 function extractItems(raw: unknown): MediaItem[] {
+  const fileEntries = galleryDlFileEntries(raw);
+  if (fileEntries.length > 0) {
+    return fileEntries.map(({ url, metadata }, position) => {
+      const item = itemFromObject(metadata);
+      const type = item.type !== 'unknown' ? item.type : inferItemType(url, item.extension, metadata);
+      return {
+        ...item,
+        url,
+        type,
+        thumbnail: item.thumbnail || (type === 'image' ? url : undefined),
+        index: position + 1,
+        selected: true
+      };
+    });
+  }
+
   const candidates: Record<string, unknown>[] = [];
   visitObjects(raw, (object) => {
     const mediaUrl = firstString(object, ['url', 'file_url', 'image_url', 'display_url', 'video_url', 'contentUrl', 'src', 'original']);

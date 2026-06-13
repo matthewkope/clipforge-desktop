@@ -2,9 +2,15 @@ import { ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { delimiter } from 'node:path';
 import { BrowserWindow } from 'electron';
-import type { DownloadProgress, DownloadRequest, DownloadResult, GalleryDownloadRequest, OutputType } from '../shared/media.js';
+import type {
+  DownloadHistorySource,
+  DownloadProgress,
+  DownloadRequest,
+  DownloadResult,
+  GalleryDownloadRequest,
+  OutputType
+} from '../shared/media.js';
 import { buildDownloadArgs, buildWhisperAudioArgs, classifyYtDlpError } from './ytdlp.js';
 import { buildGalleryDlDownloadArgs, classifyGalleryDlError } from './downloaders/galleryDlAdapter.js';
 import { buildInstaloaderDownloadArgs } from './downloaders/instaloaderAdapter.js';
@@ -21,6 +27,10 @@ import {
 } from './downloaders/pinterestRateLimiter.js';
 import { readPinterestManifest } from './utils/mediaManifest.js';
 import { logPinterestDebug } from './utils/pinterestDebug.js';
+import { convertVideoToGif, postprocessClip } from './clipPostprocess.js';
+import { recordHistoryEntry, updateHistoryEntry } from './historyStore.js';
+import { broadcast } from './utils/broadcast.js';
+import { runWhisperCpp } from './utils/whisper.js';
 
 interface ActiveDownload {
   child?: ChildProcess;
@@ -33,20 +43,84 @@ interface SubtitleCandidate {
   kind: 'manual' | 'automatic' | 'unknown';
 }
 
+interface QueuedVideoJob {
+  downloadId: string;
+  window: BrowserWindow;
+  request: DownloadRequest;
+}
+
 const activeDownloads = new Map<string, ActiveDownload>();
 const pinterestQueue: Array<{ downloadId: string; request: GalleryDownloadRequest }> = [];
 let drainingPinterestQueue = false;
+// General FIFO queue for yt-dlp video/audio downloads: up to
+// `videoConcurrency` jobs run at a time (default 1, max 3), the rest wait.
+// Batch paste and extension clips enqueue here freely.
+const videoQueue: QueuedVideoJob[] = [];
+const activeVideoJobs = new Map<string, QueuedVideoJob>();
+let videoConcurrency = 1;
 
-export function startDownload(window: BrowserWindow, request: DownloadRequest): { downloadId: string } {
+export function setDownloadConcurrency(n: number): void {
+  const clamped = Math.min(3, Math.max(1, Math.round(n) || 1));
+  videoConcurrency = clamped;
+  void drainVideoQueue();
+}
+
+export function startDownload(
+  window: BrowserWindow,
+  request: DownloadRequest,
+  source: DownloadHistorySource = 'app'
+): { downloadId: string } {
   const downloadId = randomUUID();
   activeDownloads.set(downloadId, { window, cancelled: false });
-  void runDownloadQueue(downloadId, request);
+  void recordHistoryEntry({
+    id: downloadId,
+    url: request.url,
+    title: request.mediaTitle,
+    thumbnail: request.mediaThumbnail,
+    label: outputTypesLabel(request),
+    outputPath: request.outputPath,
+    status: 'queued',
+    savedPaths: [],
+    source,
+    createdAt: new Date().toISOString()
+  });
+  videoQueue.push({ downloadId, window, request });
+  broadcastQueueState();
+  void drainVideoQueue();
   return { downloadId };
+}
+
+export function startBatchDownload(
+  window: BrowserWindow,
+  urls: string[],
+  baseRequest: Omit<DownloadRequest, 'url'>
+): { queued: number } {
+  let queued = 0;
+  for (const url of urls) {
+    try {
+      startDownload(window, { ...baseRequest, url }, 'batch');
+      queued += 1;
+    } catch {
+      // Skip URLs that fail validation; the rest of the batch still queues.
+    }
+  }
+  return { queued };
 }
 
 export function startGalleryDownload(window: BrowserWindow, request: GalleryDownloadRequest): { downloadId: string } {
   const downloadId = randomUUID();
   activeDownloads.set(downloadId, { window, cancelled: false });
+  void recordHistoryEntry({
+    id: downloadId,
+    url: request.url,
+    thumbnail: request.thumbnail,
+    label: `${request.platform} gallery`,
+    outputPath: request.outputPath,
+    status: 'downloading',
+    savedPaths: [],
+    source: 'gallery',
+    createdAt: new Date().toISOString()
+  });
   if (request.platform === 'pinterest') {
     pinterestQueue.push({ downloadId, request });
     setPinterestPending(pinterestQueue.length);
@@ -75,6 +149,102 @@ export function cancelDownload(downloadId: string): void {
     pinterestQueue.splice(queuedIndex, 1);
     setPinterestPending(pinterestQueue.length);
   }
+  const videoQueueIndex = videoQueue.findIndex((job) => job.downloadId === downloadId);
+  if (videoQueueIndex >= 0) {
+    videoQueue.splice(videoQueueIndex, 1);
+    activeDownloads.delete(downloadId);
+    void updateHistoryEntry(downloadId, {
+      status: 'cancelled',
+      error: 'Cancelled before starting.',
+      completedAt: new Date().toISOString()
+    });
+    broadcastQueueState();
+  }
+}
+
+export function cancelAllDownloads(): void {
+  for (const job of [...videoQueue]) {
+    cancelDownload(job.downloadId);
+  }
+  for (const downloadId of [...activeVideoJobs.keys()]) {
+    cancelDownload(downloadId);
+  }
+}
+
+async function drainVideoQueue(): Promise<void> {
+  while (activeVideoJobs.size < videoConcurrency && videoQueue.length > 0) {
+    const job = videoQueue.shift();
+    if (!job) {
+      break;
+    }
+    activeVideoJobs.set(job.downloadId, job);
+    void runVideoJob(job);
+  }
+  broadcastQueueState();
+}
+
+async function runVideoJob(job: QueuedVideoJob): Promise<void> {
+  try {
+    // Fail fast before yt-dlp even starts when the target volume is nearly
+    // full; the failure flows through the normal error/history path.
+    const spaceError = await diskSpaceError(job.request.outputPath);
+    if (spaceError) {
+      failVideoJob(job, spaceError);
+      return;
+    }
+    void updateHistoryEntry(job.downloadId, { status: 'downloading' });
+    await runDownloadQueue(job.downloadId, job.request);
+  } finally {
+    activeVideoJobs.delete(job.downloadId);
+    void drainVideoQueue();
+  }
+}
+
+const minimumFreeDiskBytes = 500 * 1024 * 1024;
+
+async function diskSpaceError(outputPath: string): Promise<string | null> {
+  try {
+    const stats = await fs.statfs(outputPath);
+    const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+    if (freeBytes < minimumFreeDiskBytes) {
+      return 'Not enough free disk space in the download folder (less than 500 MB available).';
+    }
+  } catch {
+    // The folder may not exist yet or statfs may be unsupported; let yt-dlp
+    // surface any real problem instead of blocking the download here.
+  }
+  return null;
+}
+
+// Mirrors runDownloadQueue's error path for jobs that fail before starting.
+function failVideoJob(job: QueuedVideoJob, error: string): void {
+  const active = activeDownloads.get(job.downloadId);
+  activeDownloads.delete(job.downloadId);
+  if (active) {
+    sendProgress(active.window, { status: 'error', message: error });
+    sendComplete(active.window, { success: false, error });
+  }
+  void updateHistoryEntry(job.downloadId, {
+    status: 'error',
+    error,
+    completedAt: new Date().toISOString()
+  });
+}
+
+function broadcastQueueState(): void {
+  const firstActive = activeVideoJobs.values().next().value as QueuedVideoJob | undefined;
+  broadcast('download:queue', {
+    activeDownloadId: firstActive?.downloadId ?? null,
+    activeUrl: firstActive?.request.url,
+    pendingCount: videoQueue.length,
+    activeCount: activeVideoJobs.size
+  });
+}
+
+function outputTypesLabel(request: DownloadRequest): string {
+  const formats = request.outputTypes.length > 0 ? request.outputTypes : ['mp4'];
+  const base = formats.map((format) => format.toUpperCase()).join(' + ');
+  return request.clipRange ? `${base} clip` : base;
 }
 
 async function drainPinterestQueue(): Promise<void> {
@@ -124,13 +294,23 @@ async function runDownloadQueue(downloadId: string, request: DownloadRequest): P
         message: `Starting ${outputLabel(outputType)} (${index + 1}/${outputs.length})...`
       });
 
+      if (outputType === 'gif' && (!request.clipRange || request.clipRange.end - request.clipRange.start > 30)) {
+        throw new Error('GIF export is limited to clips of 30 seconds or less.');
+      }
+
       const result =
         outputType === 'markdown'
           ? await runMarkdownTranscript(downloadId, request, index, outputs.length)
           : outputType === 'timed-transcript'
             ? await runTimedTranscript(downloadId, request, index, outputs.length)
           : await runSingleDownload(downloadId, request, outputType, index, outputs.length);
-      savedPaths.push(...result.savedPaths);
+      const finalResultPaths =
+        outputType === 'gif'
+          ? await convertGifPaths(result.savedPaths, active.window)
+          : (outputType === 'mp4' || outputType === 'webm') && (request.clipCrop || request.burnCaptions)
+            ? await postprocessVideoPaths(request, result.savedPaths, active.window)
+            : result.savedPaths;
+      savedPaths.push(...finalResultPaths);
     }
 
     activeDownloads.delete(downloadId);
@@ -144,6 +324,11 @@ async function runDownloadQueue(downloadId: string, request: DownloadRequest): P
       filename: uniquePaths[0]
     });
     sendComplete(active.window, { success: true, savedPath: uniquePaths[0], savedPaths: uniquePaths });
+    void updateHistoryEntry(downloadId, {
+      status: 'finished',
+      savedPaths: uniquePaths,
+      completedAt: new Date().toISOString()
+    });
   } catch (caught) {
     activeDownloads.delete(downloadId);
     const error = caught instanceof Error ? classifyYtDlpError(caught.message) : 'Download failed.';
@@ -153,6 +338,11 @@ async function runDownloadQueue(downloadId: string, request: DownloadRequest): P
       message: error
     });
     sendComplete(active.window, { success: false, error });
+    void updateHistoryEntry(downloadId, {
+      status: cancelled ? 'cancelled' : 'error',
+      error,
+      completedAt: new Date().toISOString()
+    });
   }
 }
 
@@ -162,10 +352,21 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
     return;
   }
 
+  // Completion funnel: notify the renderer and keep the history entry in sync.
+  const complete = (result: DownloadResult) => {
+    sendComplete(active.window, result);
+    void updateHistoryEntry(downloadId, {
+      status: result.success ? 'finished' : result.error?.toLowerCase().includes('cancelled') ? 'cancelled' : 'error',
+      error: result.success ? undefined : result.error,
+      savedPaths: result.savedPaths ?? (result.savedPath ? [result.savedPath] : []),
+      completedAt: new Date().toISOString()
+    });
+  };
+
   if (request.platform === 'pinterest' && getPinterestRateLimitState().paused) {
     const message = pinterestRateLimitMessage();
     sendProgress(active.window, { status: 'error', message });
-    sendComplete(active.window, { success: false, error: message });
+    complete({ success: false, error: message });
     return;
   }
 
@@ -178,7 +379,7 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
       );
       activeDownloads.delete(downloadId);
       const failedItems = result.failed.map(({ item, reason }) => ({ id: item.appItemId || item.id, label: item.pinId || item.filename, reason }));
-      sendComplete(active.window, {
+      complete({
         success: result.savedPaths.length > 0 || failedItems.length === 0,
         savedPath: result.savedPaths[0],
         savedPaths: result.savedPaths,
@@ -192,7 +393,7 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
         await markPinterest429({ downloadId, mode: 'selected' });
       }
       sendProgress(active.window, { status: error.toLowerCase().includes('cancelled') ? 'cancelled' : 'error', message: error });
-      sendComplete(active.window, { success: false, error });
+      complete({ success: false, error });
     }
     return;
   }
@@ -263,7 +464,7 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
       }
       const message = request.platform === 'pinterest' && isPinterestRateLimitedOutput(error.message) ? pinterestRateLimitMessage() : classifyGalleryDlError(error.message);
       sendProgress(active.window, { status: 'error', message });
-      sendComplete(active.window, { success: false, error: message });
+      complete({ success: false, error: message });
       resolve();
     });
 
@@ -273,7 +474,7 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
 
       if (active.cancelled || signal || code === null) {
         sendProgress(active.window, { status: 'cancelled', message: 'Download cancelled.' });
-        sendComplete(active.window, { success: false, error: 'Download cancelled.' });
+        complete({ success: false, error: 'Download cancelled.' });
         resolve();
         return;
       }
@@ -290,13 +491,13 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
           const message = pinterestRateLimitMessage();
           void markPinterest429({ downloadId, mode: 'full-board', output: combinedOutput.slice(-1000) });
           sendProgress(active.window, { status: 'error', message });
-          sendComplete(active.window, { success: false, error: message });
+          complete({ success: false, error: message });
           resolve();
           return;
         }
         const message = request.tool === 'yt-dlp' ? classifyYtDlpError(combinedOutput) : classifyGalleryDlError(combinedOutput);
         sendProgress(active.window, { status: 'error', message });
-        sendComplete(active.window, { success: false, error: message });
+        complete({ success: false, error: message });
         resolve();
         return;
       }
@@ -316,7 +517,7 @@ async function runGalleryDownload(downloadId: string, request: GalleryDownloadRe
           outputTail: combinedOutput.slice(-2000)
         });
       }
-      sendComplete(active.window, { success: true, savedPath: savedPaths[0], savedPaths });
+      complete({ success: true, savedPath: savedPaths[0], savedPaths });
       resolve();
     });
   });
@@ -520,6 +721,41 @@ function runSingleDownload(
   });
 }
 
+// Converts the intermediate 480p MP4 a GIF download produced into the final
+// .gif (deleting the MP4); non-video side files pass through untouched.
+async function convertGifPaths(paths: string[], window: BrowserWindow): Promise<string[]> {
+  const processed: string[] = [];
+  for (const savedPath of paths) {
+    if (/\.(?:mp4|webm|mov|mkv)$/i.test(savedPath)) {
+      sendProgress(window, { status: 'processing', message: 'GIF: converting clip with ffmpeg palette...' });
+      processed.push(await convertVideoToGif(savedPath));
+    } else {
+      processed.push(savedPath);
+    }
+  }
+  return processed;
+}
+
+// Runs the ffmpeg crop/caption pass over downloaded video files; non-video
+// side outputs (e.g. caption files yt-dlp also wrote) pass through untouched.
+async function postprocessVideoPaths(request: DownloadRequest, paths: string[], window: BrowserWindow): Promise<string[]> {
+  const processed: string[] = [];
+  for (const savedPath of paths) {
+    if (/\.(?:mp4|webm|mov|mkv)$/i.test(savedPath)) {
+      processed.push(
+        await postprocessClip({
+          request,
+          inputPath: savedPath,
+          onProgress: (message) => sendProgress(window, { status: 'processing', message })
+        })
+      );
+    } else {
+      processed.push(savedPath);
+    }
+  }
+  return processed;
+}
+
 async function finalSavedPaths(paths: string[]): Promise<string[]> {
   const candidates = [...new Set(paths)].filter((filePath) => !isIntermediateDownloadPath(filePath));
   const existing: string[] = [];
@@ -572,7 +808,7 @@ async function runWhisperTranscript(
     message: 'Transcript: running whisper.cpp...'
   });
 
-  const srtPath = await runWhisperCpp(downloadId, audioPath, request);
+  const srtPath = await runWhisperCppForDownload(downloadId, audioPath, request);
   return { audioPath, srtPath };
 }
 
@@ -646,125 +882,32 @@ function runAudioExtraction(
   });
 }
 
-async function runWhisperCpp(downloadId: string, audioPath: string, request: DownloadRequest): Promise<string> {
+// Runs whisper.cpp via the shared utility, wiring its child process and
+// progress lines into this download's cancellation/progress plumbing.
+async function runWhisperCppForDownload(downloadId: string, audioPath: string, request: DownloadRequest): Promise<string> {
   const active = activeDownloads.get(downloadId);
   if (!active) {
     return Promise.reject(new Error('Download cancelled.'));
   }
-  const modelPath = request.whisperModelPath || (await resolveWhisperCppModel());
 
-  const outputDirectory = path.dirname(audioPath);
-  const binary = await resolveWhisperCppBinary();
-  const outputBase = path.join(outputDirectory, path.basename(audioPath).replace(/\.[^.]+$/u, ''));
-  const child = spawn(binary, ['-m', modelPath, '-f', audioPath, '-osrt', '-of', outputBase], {
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  let combinedOutput = '';
-
-  active.child = child;
-
-  const handleOutput = (chunk: Buffer) => {
-    const text = chunk.toString();
-    combinedOutput += text;
-    for (const line of text.split(/\r?\n/).filter(Boolean)) {
-      sendProgress(active.window, {
-        status: 'processing',
-        message: `whisper.cpp: ${line.trim()}`
-      });
-    }
-  };
-
-  child.stdout?.on('data', handleOutput);
-  child.stderr?.on('data', handleOutput);
-
-  return new Promise((resolve, reject) => {
-    child.on('error', (error) => {
-      reject(new Error(classifyYtDlpError(error.message)));
+  try {
+    return await runWhisperCpp({
+      audioPath,
+      modelPath: request.whisperModelPath,
+      onChild: (child) => {
+        active.child = child;
+      },
+      onProgressLine: (line) => {
+        sendProgress(active.window, {
+          status: 'processing',
+          message: `whisper.cpp: ${line}`
+        });
+      },
+      isCancelled: () => active.cancelled
     });
-
-    child.on('close', (code, signal) => {
-      active.child = undefined;
-      if (active.cancelled || signal || code === null) {
-        reject(new Error('Download cancelled.'));
-        return;
-      }
-
-      if (code !== 0) {
-        reject(new Error(classifyYtDlpError(combinedOutput || 'whisper.cpp command not found')));
-        return;
-      }
-
-      resolve(`${outputBase}.srt`);
-    });
-  });
-}
-
-async function resolveWhisperCppBinary(): Promise<string> {
-  const configured = process.env.WHISPER_CPP_BIN;
-  if (configured && (await fileExists(configured))) {
-    return configured;
+  } finally {
+    active.child = undefined;
   }
-
-  const candidates = ['whisper-cli', 'main'];
-  const pathDirectories = [
-    ...(process.env.PATH ?? '').split(delimiter),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/opt/homebrew/opt/whisper-cpp/bin',
-    '/usr/local/opt/whisper-cpp/bin',
-    ...(await homebrewWhisperCppBinDirectories())
-  ];
-  for (const candidate of candidates) {
-    for (const directory of pathDirectories) {
-      const fullPath = path.join(directory, candidate);
-      if (await fileExists(fullPath)) {
-        return fullPath;
-      }
-    }
-  }
-
-  throw new Error('whisper.cpp was not found. Install whisper.cpp and make whisper-cli available on PATH, or set WHISPER_CPP_BIN.');
-}
-
-async function resolveWhisperCppModel(): Promise<string> {
-  const configured = process.env.WHISPER_CPP_MODEL;
-  if (configured && (await fileExists(configured))) {
-    return configured;
-  }
-
-  const candidates = [
-    '/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin',
-    '/opt/homebrew/share/whisper-cpp/models/ggml-base.bin',
-    '/usr/local/share/whisper-cpp/models/ggml-base.en.bin',
-    '/usr/local/share/whisper-cpp/models/ggml-base.bin',
-    path.join(process.env.HOME ?? '', 'models/ggml-base.en.bin'),
-    path.join(process.env.HOME ?? '', 'models/ggml-base.bin'),
-    path.join(process.env.HOME ?? '', 'Downloads/ggml-base.en.bin'),
-    path.join(process.env.HOME ?? '', 'Downloads/ggml-base.bin')
-  ];
-
-  for (const candidate of candidates) {
-    if (await fileExists(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error('Choose a whisper.cpp model file before generating a transcript without source captions.');
-}
-
-async function homebrewWhisperCppBinDirectories(): Promise<string[]> {
-  const roots = ['/opt/homebrew/Cellar/whisper-cpp', '/usr/local/Cellar/whisper-cpp'];
-  const directories: string[] = [];
-  for (const root of roots) {
-    try {
-      const versions = await fs.readdir(root);
-      directories.push(...versions.map((version) => path.join(root, version, 'bin')));
-    } catch {
-      // Homebrew may not be installed in this prefix.
-    }
-  }
-  return directories;
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -851,6 +994,7 @@ function buildYtDlpGeneralArgs(request: GalleryDownloadRequest): string[] {
     `${request.outputPath}/%(title)s.%(ext)s`,
     '--progress-template',
     'download:%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress.filename)s',
+    '--',
     request.url
   ];
 }
@@ -914,6 +1058,7 @@ function outputLabel(outputType: OutputType): string {
     wav: 'WAV',
     m4a: 'M4A',
     webm: 'WEBM',
+    gif: 'GIF',
     subtitles: 'SRT captions',
     'timed-transcript': 'Timed transcript',
     markdown: 'Markdown transcript'
@@ -922,7 +1067,7 @@ function outputLabel(outputType: OutputType): string {
 }
 
 function orderedOutputs(outputTypes: OutputType[]): OutputType[] {
-  const videoOutputs: OutputType[] = ['webm', 'mp4'];
+  const videoOutputs: OutputType[] = ['webm', 'mp4', 'gif'];
   const selectedVideoOutputs = videoOutputs.filter((outputType) => outputTypes.includes(outputType));
   const nonVideoOutputs = outputTypes.filter((outputType) => !videoOutputs.includes(outputType));
   return [...nonVideoOutputs, ...selectedVideoOutputs];
@@ -1035,10 +1180,6 @@ function removeSubtitleLanguageSuffix(value: string): string {
 function transcriptLanguage(request: DownloadRequest): string {
   const language = (request.subtitleLanguage || 'en.*').split(',')[0]?.trim() || 'en';
   return language.replace(/\.\*$/u, '').replace(/[^\w-]/g, '') || 'en';
-}
-
-function sanitizeFileName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+|\.+$/g, '') || 'transcript';
 }
 
 function subtitleToMarkdown(subtitle: string): string {
