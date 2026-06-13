@@ -13,7 +13,77 @@ This project is an Electron + React + TypeScript desktop app that wraps local do
   - `ffmpeg` and `ffprobe` for merging/conversion
   - `gallery-dl` for Instagram/Facebook/Pinterest gallery/image support
   - `instaloader` is optional and only a future Instagram fallback
-  - `whisper.cpp` support exists conceptually as a fallback transcript path, but current YouTube markdown transcript work prefers source captions
+  - `whisper.cpp` is the active fallback for transcripts and clip-caption burning when a source/auto caption is unavailable (`whisper-cli`); source captions are still preferred when present
+
+## Current State / Feature Map (read this first)
+
+Much of this doc below is historical Pinterest-debugging context. The app has
+grown well past that. Current systems and where they live:
+
+### Tool resolution (`src/main/toolResolver.ts`)
+Resolves yt-dlp/gallery-dl/ffmpeg/ffprobe/instaloader in order: env override →
+auto-updated copy in `userData/bin` → **system/Homebrew bin dirs** (`/opt/homebrew/bin`,
+etc.) → bundled `resources/bin` → bare name on PATH. The Homebrew probe matters
+because a Dock/Finder-launched app does NOT inherit the shell PATH. A dev checkout
+or a machine with Homebrew tools needs no bundled binaries.
+
+### Browser extension over Native Messaging (NOT an HTTP port)
+The old loopback HTTP bridge is gone. The extension talks to the app through
+**Chrome Native Messaging**:
+- `extension/background.js` → `chrome.runtime.sendNativeMessage('com.clipforge.host', ...)`
+- `extension/native-host/clipforge-host.mjs` relays length-prefixed JSON frames to
+- a **Unix-domain socket** at `userData/clipforge.sock` (0600), served by
+  `src/main/extensionBridge.ts` (`handleMessage` dispatches `clipforge-status` /
+  `clipforge-transcript` / `clipforge-download`).
+- Register the host with `npm run install:extension-host` (`scripts/install-native-host.mjs`)
+  — writes a launcher + per-browser `com.clipforge.host.json`. The extension has a
+  pinned `key` → fixed ID `peadlpdlblilnhopcbbngocoggegjfof`. The signing key
+  `extension/native-host/clipforge-extension-key.pem` is git-ignored — never commit it.
+
+### Clip picker (`extension/content.js` + `content.css`)
+Scissor button injects into the YouTube/Twitch player control bar (floating button
+on Vimeo/Reddit). Features: drag start/end carets on the progress bar with dimmed
+frame preview, **audio waveform under the scrubber** (live Web Audio AnalyserNode —
+EME/cross-origin on YouTube prevents full-track decode, so it fills in as the video
+plays), transcript search to set clip points, keyboard shortcuts (`[`/`]`/arrows/Enter/Esc),
+platform presets (Reels/Shorts/X). Clip request carries `crop`/`burnCaptions`/`captionStyle`.
+
+### Clip post-processing (`src/main/clipPostprocess.ts`)
+yt-dlp `--download-sections` downloads only the clip; then ffmpeg applies: 9:16
+center crop, burned-in captions, or GIF. Two caption modes:
+- **Block captions** — fetch SRT, `clipShiftCues` re-time, burn via `subtitles=` filter.
+- **Karaoke captions** (`captionStyle.animate === 'word'`) — `src/main/utils/karaoke.ts`
+  fetches YouTube **VTT word timing**, builds an ASS track with `{\kf}` per-word
+  fill-sweep, burns via `ass=` filter. Falls back to block captions when word timing
+  is unavailable. The extension karaoke toggle gates on burn-captions; the field flows
+  extension → `extensionBridge.parseCaptionStyle` → `DownloadRequest.captionStyle`.
+
+### SponsorBlock (`src/main/ytdlp.ts`)
+`buildDownloadArgs` adds yt-dlp's native `--sponsorblock-remove` for full (non-clip)
+mp4/webm/mp3/wav/m4a downloads when `DownloadRequest.sponsorBlockCategories` is set.
+Settings toggle in `App.tsx` (off by default, default cats sponsor/intro/outro/selfpromo,
+persisted to localStorage, threaded through `buildVideoDownloadRequest` + batch path).
+
+### Downloads queue / history / batch / watch folders
+`src/main/downloadManager.ts` (concurrency, queue, post-process funnel),
+`src/main/historyStore.ts` (`download-history.json`, unified active+history),
+`src/main/watchManager.ts` (channel/playlist/profile incremental sync via
+`--download-archive` + scheduler + macOS notification). Renderer:
+`DownloadsPanel.tsx`, `WatchPanel.tsx` (behind the folder icon).
+
+### Personal packaged-app workflow (this is a personal app, not public)
+`npm run app:install` (`scripts/install-app.sh`) rebuilds + ad-hoc-signs +
+copies `ClipForge.app` to `/Applications`. A `clipforge` shell function runs the
+dev build. The OpenAI key is loaded from the macOS Keychain (not `~/.zshrc`).
+
+### Shared contract types (`src/shared/media.ts`)
+`CaptionStyle.animate?: 'word'` and `DownloadRequest.sponsorBlockCategories?: string[]`
+are the cross-cutting fields for the two features above. When adding features that
+span main + extension + renderer, define the shared type here first.
+
+### Verify after changes
+`npm run typecheck && npm test && npm run build` (25 node:test cases in `tests/*.test.mjs`,
+covering srt/karaoke cue utils and the extension request router).
 
 ## Main User Flows Already Built
 
@@ -128,7 +198,11 @@ Key files:
 - `src/main/utils/pinterestDebug.ts`
   - Writes logs to `~/Library/Logs/clipforge-desktop/pinterest-debug.log`.
 
-## Current Known Problem
+## Pinterest Debugging Notes (historical — may be resolved)
+
+> This section captured an in-progress Pinterest cookie issue from an earlier
+> session. It is kept for reference but is NOT the current focus; verify against
+> the live behavior before acting on it.
 
 The user can analyze the board and sees 49 displayed items for:
 
