@@ -63,6 +63,14 @@ export async function autoUpdateYtDlp(): Promise<void> {
   }
 }
 
+// Force-refresh the managed yt-dlp now (backs the in-app "Update yt-dlp" button
+// for packaged builds, where there is no Homebrew/pip to update through).
+export async function updateManagedYtDlp(): Promise<string> {
+  await downloadYtDlp();
+  const version = installedYtDlpVersion();
+  return version ? `yt-dlp updated to ${version}.` : 'yt-dlp updated.';
+}
+
 async function downloadYtDlp(): Promise<void> {
   await fs.mkdir(managedBinDir(), { recursive: true });
   const dest = managedBinaryPath('yt-dlp');

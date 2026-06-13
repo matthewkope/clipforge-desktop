@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import type { DownloadTool, YtDlpUpdateInfo } from '../shared/media.js';
+import { isManaged, resolveToolPath } from './toolResolver.js';
+import { updateManagedYtDlp } from './binaryManager.js';
 
 // yt-dlp breaks whenever YouTube changes its player; surfacing "you are out of
 // date" in the app is the cheapest reliability win available. Versions are
 // date-shaped (2026.05.10) so plain string inequality is a safe comparison.
 export async function checkYtDlpUpdate(): Promise<YtDlpUpdateInfo | null> {
   try {
-    const current = (await runCapture('yt-dlp', ['--version'], 10_000)).trim();
+    const current = (await runCapture(resolveToolPath('yt-dlp'), ['--version'], 10_000)).trim();
     if (!current) {
       return null;
     }
@@ -36,6 +38,12 @@ export async function checkYtDlpUpdate(): Promise<YtDlpUpdateInfo | null> {
 export async function updateDownloadTool(tool: DownloadTool): Promise<string> {
   if (!['yt-dlp', 'gallery-dl', 'instaloader'].includes(tool)) {
     throw new Error('Unsupported tool update request.');
+  }
+
+  // Packaged builds own a managed yt-dlp copy with no Homebrew/pip behind it —
+  // update it by re-downloading the latest release.
+  if (tool === 'yt-dlp' && isManaged('yt-dlp')) {
+    return updateManagedYtDlp();
   }
 
   const binaryPath = await resolveBinaryRealPath(tool);

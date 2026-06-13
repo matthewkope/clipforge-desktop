@@ -11,9 +11,10 @@
     "build": "npm run build:main && vite build",
     "build:main": "tsc -p tsconfig.main.json",
     "build:extension-icons": "node scripts/generate-extension-icons.mjs",
+    "build:app-icon": "node scripts/generate-app-icon.mjs",
     "fetch-binaries": "node scripts/fetch-binaries.mjs",
-    "pack": "npm run build && npm run fetch-binaries && electron-builder --dir",
-    "dist": "npm run build && npm run fetch-binaries && electron-builder",
+    "pack": "npm run build && npm run build:app-icon && npm run fetch-binaries && electron-builder --dir",
+    "dist": "npm run build && npm run build:app-icon && npm run fetch-binaries && electron-builder",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run build:main && node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit"

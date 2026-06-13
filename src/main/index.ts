@@ -155,7 +155,27 @@ function hardenWebContents(window: BrowserWindow): void {
   }
 }
 
-app.whenReady().then(async () => {
+// Only one ClipForge instance may run: a second launch would fail to bind the
+// extension bridge port and could double-run the watch scheduler. Hand off to
+// the existing window instead of starting a second copy.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+  startClipForge();
+}
+
+function startClipForge(): void {
+  app.whenReady().then(async () => {
   registerIpcHandlers();
   // Start the bridge in the background so window creation is not blocked on it.
   startExtensionBridge().catch((caught) => {
@@ -175,7 +195,8 @@ app.whenReady().then(async () => {
       void createWindow();
     }
   });
-});
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

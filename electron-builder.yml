@@ -23,6 +23,7 @@ extraResources:
 asar: true
 
 mac:
+  icon: build/icon.png
   category: public.app-category.utilities
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -36,10 +37,12 @@ mac:
   notarize: false
 
 win:
+  icon: build/icon.png
   target:
     - nsis
 
 linux:
+  icon: build/icon.png
   category: AudioVideo
   target:
     - AppImage
