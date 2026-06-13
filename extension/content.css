@@ -217,6 +217,17 @@
   cursor: pointer;
 }
 
+/* Karaoke toggle row: gated on "Burn captions". Dimmed and non-interactive
+   while burn-captions is off (the checkbox is also disabled in JS). */
+.clipforge-karaoke-row {
+  margin-top: -2px;
+}
+
+.clipforge-karaoke-row.clipforge-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 .clipforge-search {
   margin-bottom: 8px;
 }
@@ -329,6 +340,21 @@
   inset: 0;
   pointer-events: none;
   z-index: 60;
+}
+
+/* Audio waveform strip drawn flush directly under YouTube's progress bar so it
+   sits between the start/end carets. MUST NOT capture pointer events or it
+   would break the caret drag interactions and the player's own scrubbing. */
+.clipforge-waveform-canvas {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  height: 28px;
+  margin-top: 3px;
+  pointer-events: none;
+  z-index: 59;
+  opacity: 0.9;
 }
 
 .clipforge-bar-fill {

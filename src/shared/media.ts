@@ -126,6 +126,11 @@ export type ClipCrop = 'vertical';
 export interface CaptionStyle {
   size?: 'small' | 'medium' | 'large';
   position?: 'top' | 'middle' | 'bottom';
+  // When 'word', captions are burned in as word-by-word highlighted "karaoke"
+  // captions (CapCut/Opus-clip style) using an ASS track with per-word timing
+  // instead of a plain block subtitle. Requires word-level caption timing;
+  // falls back to a block subtitle when word timing is unavailable.
+  animate?: 'word';
 }
 
 export interface TranscriptSegment {
@@ -211,6 +216,10 @@ export interface DownloadRequest {
   captionStyle?: CaptionStyle;
   // Custom filename template with {title}/{uploader}/{date}/{id} placeholders.
   outputTemplate?: string;
+  // SponsorBlock categories to cut out of the download (e.g. 'sponsor',
+  // 'intro', 'outro', 'selfpromo'). Applied via yt-dlp's native
+  // --sponsorblock-remove for full (non-clip) video/audio downloads.
+  sponsorBlockCategories?: string[];
 }
 
 export interface MediaItem {

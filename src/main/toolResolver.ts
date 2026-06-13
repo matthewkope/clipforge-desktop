@@ -8,15 +8,43 @@ import path from 'node:path';
 //   1. An explicit env override (e.g. YT_DLP_PATH) — power users / CI.
 //   2. A "managed" copy the app downloaded into userData/bin (writable, so it
 //      can be auto-updated — this is how yt-dlp stays current).
-//   3. A copy bundled inside the packaged app (extraResources → resources/bin).
-//   4. The bare tool name, i.e. whatever is on PATH (Homebrew, pip, etc.).
+//   3. A copy in a standard system bin dir (Homebrew/MacPorts). This is probed
+//      explicitly because an app launched from the Dock/Finder does NOT inherit
+//      the shell PATH, so a plain `gallery-dl` spawn would fail even when it is
+//      installed under /opt/homebrew/bin.
+//   4. A copy bundled inside the packaged app (extraResources → resources/bin).
+//   5. The bare tool name, i.e. whatever the (minimal) PATH resolves.
 //
-// Step 4 means a developer with Homebrew tools sees no behaviour change, while a
-// downloaded/packaged build uses the bundled or auto-updated binaries instead.
+// Preferring the system copy (step 3) over the bundle means a machine with the
+// tools already installed via Homebrew uses those, and no bundled binaries are
+// needed at all.
 
 export type ManagedTool = 'yt-dlp' | 'gallery-dl' | 'ffmpeg' | 'ffprobe' | 'instaloader';
 
 const isWindows = process.platform === 'win32';
+
+// Common install dirs that a GUI-launched macOS app won't have on PATH.
+const systemBinDirs = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
+  '/opt/local/bin'
+];
+
+function systemToolPath(tool: ManagedTool): string | undefined {
+  if (isWindows) {
+    return undefined;
+  }
+  const name = managedBinaryName(tool);
+  for (const dir of systemBinDirs) {
+    const candidate = existing(path.join(dir, name));
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
 
 export function managedBinDir(): string {
   return path.join(app.getPath('userData'), 'bin');
@@ -54,6 +82,7 @@ export function resolveToolPath(tool: ManagedTool): string {
   return (
     envOverride(tool) ??
     existing(managedBinaryPath(tool)) ??
+    systemToolPath(tool) ??
     existing(bundledBinaryPath(tool)) ??
     tool
   );

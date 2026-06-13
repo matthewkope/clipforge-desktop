@@ -3,15 +3,33 @@
 This Manifest V3 extension works with Chromium browsers including Chrome,
 Brave, and Microsoft Edge. ClipForge Desktop must be running.
 
+## How it connects
+
+The extension talks to the desktop app over **Chrome Native Messaging**, not a
+local web server. The browser launches a tiny host process
+(`native-host/clipforge-host.mjs`) that relays each request to the app's
+Unix-domain socket (`~/Library/Application Support/clipforge-desktop/clipforge.sock`).
+There is no listening network port at all.
+
 ## Install for development
 
-1. Open ClipForge and choose a default download folder.
-2. Keep ClipForge running.
-3. Open `chrome://extensions` in Chrome or Brave.
-4. Enable **Developer mode**.
-5. Select **Load unpacked**.
-6. Choose this repository's `extension` folder.
-7. Pin ClipForge to the browser toolbar.
+1. Open ClipForge and choose a default download folder; keep it running.
+2. Register the native messaging host (one time, and again if you move the repo):
+   ```sh
+   npm run install:extension-host
+   ```
+   This writes a launcher plus a `com.clipforge.host.json` manifest into the
+   `NativeMessagingHosts` folder of each installed Chromium browser, whitelisting
+   the extension's pinned ID.
+3. Open `chrome://extensions` (or `brave://extensions`) and enable **Developer mode**.
+4. **Load unpacked** → choose this repository's `extension` folder.
+5. The extension has a pinned `key`, so its ID is always
+   `peadlpdlblilnhopcbbngocoggegjfof` — it must match the manifest written in
+   step 2. If you reload after a code change, no re-install is needed.
+6. Pin ClipForge to the browser toolbar.
+
+> The host launches the system `node` baked into the launcher at install time.
+> If you change which `node` you use, re-run `npm run install:extension-host`.
 
 ## Use
 
@@ -30,11 +48,18 @@ player controls next to the settings gear.
 1. Click the scissor to open the clip panel.
 2. Drag the two markers on YouTube's progress bar to set the range. The
    screen dims and a frame preview follows the marker while you drag; the
-   video pauses and steps through frames so you can land on the exact cut.
+   video pauses and steps through frames so you can land on the exact cut. An
+   audio waveform fills in under the scrubber as the video plays, so you can
+   see speech vs. silence.
 3. Or type times (`1:23`, `1:02:03.5`) in the Start/End fields, or click
    **Set** to grab the current playhead position.
-4. **Preview** plays just the selected range in the player.
-5. Choose a saved preset (or direct MP4/MP3/GIF) and click **Send to ClipForge**.
+4. Or **search the transcript** for a phrase and click a result to jump the
+   clip start/end to where it's spoken.
+5. **Preview** plays just the selected range in the player.
+6. Optionally enable **9:16 crop** and **Burn captions** — turning on captions
+   reveals a **Karaoke captions** toggle that burns in word-by-word highlighted
+   captions instead of static blocks.
+7. Choose a saved preset (or direct MP4/MP3/GIF) and click **Send to ClipForge**.
 
 While the panel is open these keyboard shortcuts work (outside text fields):
 
@@ -50,8 +75,9 @@ and warn or clamp when the selection exceeds the platform's length limit
 
 ## Other Sites
 
-On Twitch, Vimeo, and Reddit a small floating scissor button appears over the
-main video; clicking it opens the same clip panel (without progress-bar
+On Twitch a scissor button appears in the player control bar (next to the
+settings gear). On Vimeo and Reddit a small floating scissor button appears
+over the main video. Either opens the same clip panel (without progress-bar
 markers or transcript search). The current page URL is sent to the desktop
 app, which handles those sites via yt-dlp.
 
@@ -63,7 +89,7 @@ The desktop app downloads only the selected section using yt-dlp
 `--download-sections` with keyframe-accurate cuts, saved with a
 `[clip start-end]` filename suffix.
 
-The extension sends requests only to ClipForge's local bridge at
-`http://127.0.0.1:38473` (via its background service worker). The desktop app
-performs URL analysis and downloading. The bridge does not listen on the
-network.
+The extension never opens a network connection. Its background service worker
+calls `chrome.runtime.sendNativeMessage`, the browser spawns the native host,
+and the host relays to the app's local Unix socket (owner-only, `0600`). The
+desktop app performs URL analysis and downloading.

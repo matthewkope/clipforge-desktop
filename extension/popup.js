@@ -1,4 +1,3 @@
-const bridgeUrl = 'http://127.0.0.1:38473';
 const formatsSection = document.querySelector('.formats');
 const formatButtons = [...document.querySelectorAll('.format-option')];
 const presetBar = document.querySelector('.preset-bar');
@@ -69,11 +68,11 @@ clipboardButton.addEventListener('click', async () => {
 
 async function loadStatus() {
   try {
-    const response = await fetch(`${bridgeUrl}/status`);
-    const body = await response.json();
-    if (!response.ok) {
-      throw new Error(body.error || 'Could not connect to ClipForge.');
+    const response = await chrome.runtime.sendMessage({ type: 'clipforge-status' });
+    if (!response?.ok) {
+      throw new Error(response?.body?.error || 'Could not connect to ClipForge.');
     }
+    const body = response.body;
 
     presets = Array.isArray(body.presets) ? body.presets : [];
     populatePresets();
@@ -129,15 +128,14 @@ async function sendDownload(url, source) {
   showStatus('Sending URL to ClipForge...');
   try {
     const selection = usePreset ? { presetId: presetSelect.value } : { format: selectedFormat };
-    const response = await fetch(`${bridgeUrl}/download`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, source, ...selection })
+    const response = await chrome.runtime.sendMessage({
+      type: 'clipforge-download',
+      payload: { url, source, ...selection }
     });
-    const body = await response.json();
-    if (!response.ok) {
-      throw new Error(body.error || 'ClipForge rejected the download.');
+    if (!response?.ok) {
+      throw new Error(response?.body?.error || 'ClipForge rejected the download.');
     }
+    const body = response.body;
     showStatus(
       body.preset ? `Sent to ClipForge with “${body.preset}”.` : `Sent to ClipForge as ${formatLabel(body.format)}.`,
       'success'

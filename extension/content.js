@@ -12,6 +12,7 @@
 const SELECTION_STORAGE_KEY = 'clipforgeClipSelection';
 const CROP_STORAGE_KEY = 'clipforgeClipCrop';
 const CAPTIONS_STORAGE_KEY = 'clipforgeBurnCaptions';
+const KARAOKE_STORAGE_KEY = 'clipforgeKaraokeCaptions';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const IS_YOUTUBE = /(^|\.)youtube\.com$/i.test(location.hostname);
 const IS_TWITCH = /(^|\.)twitch\.tv$/i.test(location.hostname);
@@ -26,6 +27,12 @@ let previewStopHandler = null;
 let panelKeydownCleanup = null;
 let floatButton = null;
 let floatVideo = null;
+let waveform = null;
+
+// Peak arrays cached per video id so re-opening the picker (or re-rendering
+// across SPA navigation) keeps the audio profile already sampled. Each entry is
+// a Float32Array indexed by time bucket holding the running peak amplitude.
+const waveformCache = new Map();
 
 const observer = new MutationObserver(() => {
   ensureClipButton();
@@ -243,6 +250,8 @@ function closePanel() {
   stopPreview();
   panelKeydownCleanup?.();
   panelKeydownCleanup = null;
+  waveform?.destroy();
+  waveform = null;
   panel?.remove();
   panel = null;
   barOverlay?.remove();
@@ -304,12 +313,16 @@ async function openPanel() {
   const range = { start, end: Math.max(end, start + 1) };
   barOverlay?.remove();
   barOverlay = null;
+  waveform?.destroy();
+  waveform = null;
   if (IS_YOUTUBE) {
     // Progress-bar carets only exist on YouTube's player.
     barOverlay = createBarMarkers(video, sliderMax, range, () => {
       startRow.input.value = formatTime(range.start);
       endRow.input.value = formatTime(range.end);
     });
+    // Audio waveform strip flush under the progress bar, between the carets.
+    waveform = createWaveform(video, sliderMax);
   }
 
   const syncSlidersFromInputs = () => {
@@ -340,6 +353,28 @@ async function openPanel() {
   optionsRow.appendChild(cropToggle.wrapper);
   optionsRow.appendChild(captionsToggle.wrapper);
   panel.appendChild(optionsRow);
+
+  // Karaoke captions: word-by-word highlighted captions. Only meaningful when
+  // "Burn captions" is on, so this toggle gates on it — hidden/disabled and
+  // reset whenever burn-captions is off. When on, sendClip sets
+  // captionStyle.animate = 'word' (the agreed contract with the desktop app).
+  const karaokeRow = el('div', 'clipforge-row clipforge-options-row clipforge-karaoke-row');
+  const karaokeToggle = makeOptionToggle('🎤 Karaoke captions', 'clipforge-karaoke-toggle', KARAOKE_STORAGE_KEY);
+  karaokeRow.appendChild(karaokeToggle.wrapper);
+  panel.appendChild(karaokeRow);
+
+  const syncKaraokeGate = () => {
+    const captionsOn = captionsToggle.checkbox.checked;
+    karaokeRow.classList.toggle('clipforge-disabled', !captionsOn);
+    karaokeToggle.checkbox.disabled = !captionsOn;
+    if (!captionsOn && karaokeToggle.checkbox.checked) {
+      // Reset karaoke when burn-captions is turned off.
+      karaokeToggle.checkbox.checked = false;
+      karaokeToggle.checkbox.dispatchEvent(new Event('change'));
+    }
+  };
+  captionsToggle.checkbox.addEventListener('change', syncKaraokeGate);
+  syncKaraokeGate();
 
   // One-click export presets for the major short-form platforms.
   const platformRow = el('div', 'clipforge-row clipforge-platform-row');
@@ -890,6 +925,183 @@ function createBarMarkers(video, max, range, onChange) {
   };
 }
 
+// Audio waveform strip drawn directly beneath YouTube's progress bar so the
+// user can see silence vs. speech/beats while picking a clip range.
+//
+// APPROACH (and its limitation):
+// We attempt `new AudioContext()` + `createMediaElementSource(video)` +
+// `AnalyserNode`. If that succeeds we MUST route the source through to
+// `audioContext.destination`, otherwise the page audio is muted. We then
+// progressively sample the analyser's peak/RMS amplitude on every animation
+// frame and store it in a per-video-id peak array, drawing only the buckets we
+// have actually heard play (the waveform fills in across the played region).
+//
+// LIMITATION ON YOUTUBE: the <video> media is typically cross-origin /
+// EME-protected, so `createMediaElementSource` may throw or yield a tainted
+// (silent / all-zero) stream, and decoding the whole track via
+// OfflineAudioContext is blocked. So this is necessarily a LIVE, progressive
+// waveform: it only fills in audio that has been played back while the picker
+// is open (it cannot pre-render the whole track). Everything is wrapped in
+// try/catch and bails out cleanly (disconnecting nodes, restoring audio) the
+// moment anything looks wrong, so it can never break the picker or page audio.
+function createWaveform(video, max) {
+  const bar = document.querySelector('.ytp-progress-bar');
+  if (!bar || !(max > 0)) {
+    return null;
+  }
+
+  const BUCKETS = 800; // Time resolution of the cached peak array.
+  const videoId = currentVideoId() || 'unknown';
+  let peaks = waveformCache.get(videoId);
+  if (!peaks || peaks.length !== BUCKETS) {
+    peaks = new Float32Array(BUCKETS);
+    waveformCache.set(videoId, peaks);
+  }
+
+  const canvas = el('canvas', 'clipforge-waveform-canvas');
+  bar.appendChild(canvas);
+
+  let audioContext = null;
+  let sourceNode = null;
+  let analyser = null;
+  let sampleBuffer = null;
+  let rafId = null;
+  let destroyed = false;
+  let ratio = window.devicePixelRatio || 1;
+
+  const resizeCanvas = () => {
+    const rect = bar.getBoundingClientRect();
+    if (rect.width === 0) {
+      return;
+    }
+    ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(canvas.offsetHeight * ratio) || Math.round(28 * ratio);
+  };
+
+  const draw = () => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx || canvas.width === 0) {
+      return;
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const mid = canvas.height / 2;
+    const colWidth = canvas.width / BUCKETS;
+    ctx.fillStyle = 'rgba(127, 227, 212, 0.65)';
+    for (let i = 0; i < BUCKETS; i += 1) {
+      const amp = peaks[i];
+      if (amp <= 0) {
+        continue;
+      }
+      const h = Math.max(1 * ratio, amp * (canvas.height - 2 * ratio));
+      ctx.fillRect(i * colWidth, mid - h / 2, Math.max(1, colWidth - 0.5), h);
+    }
+  };
+
+  // Live sampling loop: read the current peak from the analyser and fold it
+  // into the bucket for whatever time is playing now (max of what we've heard).
+  const tick = () => {
+    if (destroyed) {
+      return;
+    }
+    if (analyser && sampleBuffer && !video.paused && Number.isFinite(video.currentTime)) {
+      analyser.getFloatTimeDomainData(sampleBuffer);
+      let peak = 0;
+      for (let i = 0; i < sampleBuffer.length; i += 1) {
+        const v = Math.abs(sampleBuffer[i]);
+        if (v > peak) {
+          peak = v;
+        }
+      }
+      const bucket = Math.min(BUCKETS - 1, Math.max(0, Math.floor((video.currentTime / max) * BUCKETS)));
+      if (peak > peaks[bucket]) {
+        peaks[bucket] = Math.min(1, peak);
+      }
+    }
+    draw();
+    rafId = requestAnimationFrame(tick);
+  };
+
+  // Try to wire up Web Audio. Any failure bails out leaving page audio intact
+  // and the canvas showing whatever (cached) peaks we already have.
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      audioContext = new Ctx();
+      sourceNode = audioContext.createMediaElementSource(video);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      sampleBuffer = new Float32Array(analyser.fftSize);
+      // CRITICAL: route source -> analyser -> destination, or the page mutes.
+      sourceNode.connect(analyser);
+      analyser.connect(audioContext.destination);
+    }
+  } catch {
+    // Cross-origin / EME tainting (the common YouTube case) or no Web Audio.
+    // Disconnect anything partially wired so we never affect page audio, and
+    // fall back to drawing the cached peaks only (static, may be empty).
+    try {
+      sourceNode?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      analyser?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      audioContext?.close();
+    } catch {
+      // ignore
+    }
+    audioContext = null;
+    sourceNode = null;
+    analyser = null;
+    sampleBuffer = null;
+  }
+
+  resizeCanvas();
+  rafId = requestAnimationFrame(tick);
+  const onResize = () => {
+    resizeCanvas();
+    draw();
+  };
+  window.addEventListener('resize', onResize);
+
+  return {
+    destroy: () => {
+      destroyed = true;
+      window.removeEventListener('resize', onResize);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      // Reconnect the element source straight to the speakers before closing,
+      // so tearing down our analyser never leaves the page muted.
+      try {
+        sourceNode?.disconnect();
+        analyser?.disconnect();
+        if (sourceNode && audioContext) {
+          sourceNode.connect(audioContext.destination);
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        audioContext?.close();
+      } catch {
+        // ignore
+      }
+      audioContext = null;
+      sourceNode = null;
+      analyser = null;
+      sampleBuffer = null;
+      canvas.remove();
+    }
+  };
+}
+
 async function populateOutputs(presetSelect, sendButton) {
   const status = await chrome.runtime.sendMessage({ type: 'clipforge-status' }).catch(() => null);
   presetSelect.replaceChildren();
@@ -948,6 +1160,10 @@ async function sendClip(startInput, endInput, presetSelect, sendButton, video) {
     : { format: presetSelect.value.slice('format:'.length) || 'mp4' };
   const cropChecked = panel?.querySelector('.clipforge-crop-toggle')?.checked;
   const captionsChecked = panel?.querySelector('.clipforge-captions-toggle')?.checked;
+  // Karaoke only applies when captions are being burned. When on, the desktop
+  // app renders word-by-word highlighted captions for captionStyle.animate === 'word'.
+  const karaokeChecked = captionsChecked && panel?.querySelector('.clipforge-karaoke-toggle')?.checked;
+  const captionStyle = karaokeChecked ? { animate: 'word' } : null;
 
   sendButton.disabled = true;
   showPanelStatus('Sending clip to ClipForge…');
@@ -961,7 +1177,8 @@ async function sendClip(startInput, endInput, presetSelect, sendButton, video) {
         clipEnd: range.end,
         ...selection,
         ...(cropChecked ? { crop: 'vertical' } : {}),
-        ...(captionsChecked ? { burnCaptions: true } : {})
+        ...(captionsChecked ? { burnCaptions: true } : {}),
+        ...(captionStyle ? { captionStyle } : {})
       }
     })
     .catch(() => null);

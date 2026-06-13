@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { CaptionStyle, DownloadRequest } from '../shared/media.js';
 import { buildSubtitleFetchArgs, buildWhisperAudioArgs } from './ytdlp.js';
 import { clipShiftCues, parseTimedCues, serializeSrt } from './utils/srt.js';
+import { fetchKaraokeCues, writeKaraokeAss } from './utils/karaoke.js';
 import { runWhisperCpp } from './utils/whisper.js';
 import { resolveToolPath } from './toolResolver.js';
 
@@ -33,14 +34,34 @@ export async function postprocessClip({ request, inputPath, onProgress }: Postpr
     }
 
     if (wantsCaptions) {
-      onProgress('Clip: fetching captions to burn in...');
-      const subtitlePath = await fetchClipSubtitle(request, tempDir);
-      if (subtitlePath) {
-        filters.push(`subtitles=${escapeFilterPath(subtitlePath)}:force_style='${captionForceStyle(request.captionStyle)}'`);
-      } else {
-        onProgress('Clip: no captions were available, continuing without burned-in captions.');
-        if (!wantsCrop) {
-          return inputPath;
+      // Word-by-word "karaoke" captions need word-level timing, which only the
+      // YouTube auto-caption VTT track carries. Try that first; if it yields no
+      // word timing (e.g. caption-less videos whose only option is the whisper
+      // fallback, which has no reliable word timing) fall through to the
+      // existing block-subtitle path below.
+      let captionApplied = false;
+      if (request.captionStyle?.animate === 'word') {
+        onProgress('Clip: fetching word-level captions for karaoke highlighting...');
+        const cues = await fetchKaraokeCues(request, tempDir).catch(() => null);
+        if (cues && cues.length > 0) {
+          const assPath = await writeKaraokeAss(cues, request.captionStyle, path.join(tempDir, 'karaoke.ass'));
+          filters.push(`ass=${escapeFilterPath(assPath)}`);
+          captionApplied = true;
+        } else {
+          onProgress('Clip: no word-level timing available, using standard captions.');
+        }
+      }
+
+      if (!captionApplied) {
+        onProgress('Clip: fetching captions to burn in...');
+        const subtitlePath = await fetchClipSubtitle(request, tempDir);
+        if (subtitlePath) {
+          filters.push(`subtitles=${escapeFilterPath(subtitlePath)}:force_style='${captionForceStyle(request.captionStyle)}'`);
+        } else {
+          onProgress('Clip: no captions were available, continuing without burned-in captions.');
+          if (!wantsCrop) {
+            return inputPath;
+          }
         }
       }
     }

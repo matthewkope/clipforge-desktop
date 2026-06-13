@@ -16,6 +16,12 @@ export default defineConfig(({ command }) => ({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    strictPort: false
+    strictPort: false,
+    // Don't watch build-output folders. They live in the project root, and Vite
+    // churning on them (the packaged app, downloaded binaries, compiled output)
+    // triggers spurious dev-server page reloads that can blank the window.
+    watch: {
+      ignored: ['**/dist/**', '**/release/**', '**/resources/bin/**']
+    }
   }
 }));

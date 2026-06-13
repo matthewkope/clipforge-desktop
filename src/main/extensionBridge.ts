@@ -1,11 +1,18 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type { BrowserWindow } from 'electron';
+import { createServer, type Server, type Socket } from 'node:net';
+import { chmod, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { app, type BrowserWindow } from 'electron';
 import type { CaptionStyle, ExtensionBridgeConfig, ExtensionDownloadRequest, FormatPreset, OutputType } from '../shared/media.js';
 import { fetchTranscriptSegments } from './transcriptService.js';
 
-const bridgeHost = '127.0.0.1';
-export const extensionBridgePort = 38473;
+// The browser extension reaches the desktop app through Chrome Native
+// Messaging: the browser spawns a small host process (extension/native-host)
+// which relays each request to THIS Unix-domain socket. There is no network
+// listener — only a filesystem socket in the app's user-data dir, reachable
+// only by the current user — so the website-driven and DNS-rebinding attack
+// surfaces of the old loopback HTTP bridge are gone entirely.
+
+const maxFrameBytes = 1_000_000;
 const allowedExtensionFormats = new Set<ExtensionDownloadRequest['format']>(['mp4', 'mp3', 'markdown', 'gif']);
 const allowedOutputTypes = new Set<OutputType>([
   'mp4',
@@ -23,6 +30,12 @@ let server: Server | null = null;
 let mainWindow: BrowserWindow | null = null;
 let config: ExtensionBridgeConfig | null = null;
 
+// Canonical socket path. The native host computes the same path (see
+// extension/native-host/clipforge-host.mjs); keep them in sync.
+export function extensionSocketPath(): string {
+  return path.join(app.getPath('userData'), 'clipforge.sock');
+}
+
 export function setExtensionBridgeWindow(window: BrowserWindow | null): void {
   mainWindow = window;
 }
@@ -31,21 +44,26 @@ export function updateExtensionBridgeConfig(nextConfig: ExtensionBridgeConfig): 
   config = normalizeConfig(nextConfig);
 }
 
-export function startExtensionBridge(): Promise<void> {
+export async function startExtensionBridge(): Promise<void> {
   if (server) {
-    return Promise.resolve();
+    return;
   }
+  const socketPath = extensionSocketPath();
+  // A leftover socket file from a crash would make listen() fail with EADDRINUSE.
+  await unlink(socketPath).catch(() => undefined);
 
-  return new Promise((resolve, reject) => {
-    server = createServer((request, response) => {
-      void handleRequest(request, response);
-    });
-    server.once('error', reject);
-    server.listen(extensionBridgePort, bridgeHost, () => {
-      server?.removeListener('error', reject);
+  await new Promise<void>((resolve, reject) => {
+    const next = createServer((socket) => handleConnection(socket));
+    next.once('error', reject);
+    next.listen(socketPath, () => {
+      next.removeListener('error', reject);
+      server = next;
       resolve();
     });
   });
+
+  // Owner-only, so no other user account on the machine can send requests.
+  await chmod(socketPath, 0o600).catch(() => undefined);
 }
 
 export function stopExtensionBridge(): Promise<void> {
@@ -54,120 +72,138 @@ export function stopExtensionBridge(): Promise<void> {
   if (!activeServer) {
     return Promise.resolve();
   }
-
   return new Promise((resolve) => {
-    activeServer.close(() => resolve());
+    activeServer.close(() => {
+      void unlink(extensionSocketPath())
+        .catch(() => undefined)
+        .then(() => resolve());
+    });
   });
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  // Reject requests whose Host header is not the loopback bridge address. Combined with
-  // the Origin check below this blocks DNS-rebinding attacks, where a malicious website
-  // resolves its own domain to 127.0.0.1 to reach this local server from the browser.
-  if (!isAllowedBridgeHost(request.headers.host)) {
-    sendJson(response, 403, { error: 'This bridge only accepts local requests.' });
-    return;
-  }
+// Reads length-prefixed frames (4-byte little-endian length + UTF-8 JSON) and
+// answers each with a framed `{ ok, body }` response — the same shape the old
+// HTTP relay returned, so the extension's handling is unchanged.
+function handleConnection(socket: Socket): void {
+  let buffer = Buffer.alloc(0);
+  let expected: number | null = null;
 
-  const origin = request.headers.origin;
-  if (origin && !isAllowedExtensionOrigin(origin)) {
-    sendJson(response, 403, { error: 'This bridge only accepts browser-extension requests.' });
-    return;
-  }
-
-  // State-changing routes require a real browser-extension Origin. Browsers
-  // always attach Origin on cross-origin requests, so this blocks both websites
-  // and non-browser local processes (curl, scripts) that omit it from forging a
-  // download or transcript request.
-  if (request.method === 'POST' && !isAllowedExtensionOrigin(origin ?? '')) {
-    sendJson(response, 403, { error: 'This bridge only accepts browser-extension requests.' });
-    return;
-  }
-
-  applyCorsHeaders(response, origin);
-  if (request.method === 'OPTIONS') {
-    response.writeHead(204);
-    response.end();
-    return;
-  }
-
-  if (request.method === 'GET' && request.url === '/health') {
-    sendJson(response, 200, {
-      app: 'ClipForge',
-      ready: Boolean(mainWindow && !mainWindow.isDestroyed()),
-      port: (server?.address() as AddressInfo | null)?.port ?? extensionBridgePort
-    });
-    return;
-  }
-
-  if (request.method === 'GET' && request.url === '/status') {
-    sendJson(response, 200, {
-      presets: config?.presets ?? [],
-      saveFolderConfigured: Boolean(config?.saveFolder),
-      downloadActive: Boolean(config?.downloadActive),
-      ready: Boolean(mainWindow && !mainWindow.isDestroyed())
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && request.url === '/transcript') {
-    try {
-      const body = (await readJsonBody(request)) as { url?: unknown };
-      if (typeof body.url !== 'string' || !isHttpUrl(body.url)) {
-        throw new BridgeRequestError(400, 'The transcript request needs a valid HTTP or HTTPS URL.');
+  socket.on('data', (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (;;) {
+      if (expected === null) {
+        if (buffer.length < 4) {
+          return;
+        }
+        expected = buffer.readUInt32LE(0);
+        buffer = buffer.subarray(4);
+        if (expected > maxFrameBytes) {
+          socket.destroy();
+          return;
+        }
       }
-      const segments = await fetchTranscriptSegments(
-        body.url.trim(),
-        config?.subtitleLanguage || 'en.*',
-        config?.cookieSource ?? 'none',
-        config?.cookieFilePath,
-        // Use the whisper model the user loaded in Settings → Transcripts for
-        // the caption-less fallback, matching the rest of the app.
-        config?.whisperModelPath || undefined
-      );
-      sendJson(response, 200, { segments });
-    } catch (caught) {
-      const status = caught instanceof BridgeRequestError ? caught.status : 400;
-      const message = caught instanceof Error ? caught.message : 'Transcript fetch failed.';
-      sendJson(response, status, { error: message });
+      if (buffer.length < expected) {
+        return;
+      }
+      const frame = buffer.subarray(0, expected);
+      buffer = buffer.subarray(expected);
+      expected = null;
+      void respond(socket, frame);
     }
+  });
+
+  socket.on('error', () => socket.destroy());
+}
+
+async function respond(socket: Socket, frame: Buffer): Promise<void> {
+  let result: { ok: boolean; body: unknown };
+  try {
+    const message = JSON.parse(frame.toString('utf8')) as unknown;
+    result = await handleMessage(message);
+  } catch (caught) {
+    result = { ok: false, body: { error: caught instanceof Error ? caught.message : 'Invalid request.' } };
+  }
+  if (socket.destroyed) {
     return;
   }
+  const json = Buffer.from(JSON.stringify(result), 'utf8');
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(json.length, 0);
+  socket.write(Buffer.concat([header, json]));
+}
 
-  if (request.method === 'POST' && request.url === '/download') {
-    try {
-      const body = await readJsonBody(request);
-      const downloadRequest = parseDownloadRequest(body);
-      const preset = downloadRequest.presetId
-        ? config?.presets.find((candidate) => candidate.id === downloadRequest.presetId)
-        : undefined;
-      if (downloadRequest.presetId && !preset) {
-        throw new BridgeRequestError(400, 'The selected preset is no longer available.');
-      }
-      if (!config?.saveFolder) {
-        throw new BridgeRequestError(409, 'Choose a save folder in ClipForge before using the extension.');
-      }
-      // Concurrent requests are fine: the desktop app queues downloads.
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        throw new BridgeRequestError(503, 'ClipForge is not ready.');
-      }
+async function handleMessage(message: unknown): Promise<{ ok: boolean; body: unknown }> {
+  const type = typeof message === 'object' && message ? (message as { type?: unknown }).type : undefined;
+  const payload = typeof message === 'object' && message ? (message as { payload?: unknown }).payload : undefined;
 
-      mainWindow.show();
-      mainWindow.focus();
-      const trustedRequest: ExtensionDownloadRequest = preset
-        ? { ...downloadRequest, presetName: preset.name, formats: [...preset.formats] }
-        : downloadRequest;
-      mainWindow.webContents.send('extension:download-request', trustedRequest);
-      sendJson(response, 202, { accepted: true, format: trustedRequest.format, preset: trustedRequest.presetName });
-    } catch (caught) {
-      const status = caught instanceof BridgeRequestError ? caught.status : 400;
-      const message = caught instanceof Error ? caught.message : 'Invalid extension request.';
-      sendJson(response, status, { error: message });
+  if (type === 'clipforge-status') {
+    return { ok: true, body: statusBody() };
+  }
+  if (type === 'clipforge-transcript') {
+    return handleTranscript(payload);
+  }
+  if (type === 'clipforge-download') {
+    return handleDownload(payload);
+  }
+  return { ok: false, body: { error: 'Unknown ClipForge request.' } };
+}
+
+function statusBody(): unknown {
+  return {
+    presets: config?.presets ?? [],
+    saveFolderConfigured: Boolean(config?.saveFolder),
+    downloadActive: Boolean(config?.downloadActive),
+    ready: Boolean(mainWindow && !mainWindow.isDestroyed())
+  };
+}
+
+async function handleTranscript(payload: unknown): Promise<{ ok: boolean; body: unknown }> {
+  try {
+    const url = (payload as { url?: unknown })?.url;
+    if (typeof url !== 'string' || !isHttpUrl(url)) {
+      throw new Error('The transcript request needs a valid HTTP or HTTPS URL.');
     }
-    return;
+    const segments = await fetchTranscriptSegments(
+      url.trim(),
+      config?.subtitleLanguage || 'en.*',
+      config?.cookieSource ?? 'none',
+      config?.cookieFilePath,
+      // Use the whisper model the user loaded in Settings → Transcripts for the
+      // caption-less fallback, matching the rest of the app.
+      config?.whisperModelPath || undefined
+    );
+    return { ok: true, body: { segments } };
+  } catch (caught) {
+    return { ok: false, body: { error: caught instanceof Error ? caught.message : 'Transcript fetch failed.' } };
   }
+}
 
-  sendJson(response, 404, { error: 'Not found.' });
+async function handleDownload(payload: unknown): Promise<{ ok: boolean; body: unknown }> {
+  try {
+    const downloadRequest = parseDownloadRequest(payload);
+    const preset = downloadRequest.presetId
+      ? config?.presets.find((candidate) => candidate.id === downloadRequest.presetId)
+      : undefined;
+    if (downloadRequest.presetId && !preset) {
+      throw new Error('The selected preset is no longer available.');
+    }
+    if (!config?.saveFolder) {
+      throw new Error('Choose a save folder in ClipForge before using the extension.');
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error('ClipForge is not ready.');
+    }
+
+    mainWindow.show();
+    mainWindow.focus();
+    const trustedRequest: ExtensionDownloadRequest = preset
+      ? { ...downloadRequest, presetName: preset.name, formats: [...preset.formats] }
+      : downloadRequest;
+    mainWindow.webContents.send('extension:download-request', trustedRequest);
+    return { ok: true, body: { accepted: true, format: trustedRequest.format, preset: trustedRequest.presetName } };
+  } catch (caught) {
+    return { ok: false, body: { error: caught instanceof Error ? caught.message : 'Invalid extension request.' } };
+  }
 }
 
 function normalizeConfig(value: ExtensionBridgeConfig): ExtensionBridgeConfig {
@@ -183,19 +219,19 @@ function normalizeConfig(value: ExtensionBridgeConfig): ExtensionBridgeConfig {
 
 function parseDownloadRequest(value: unknown): ExtensionDownloadRequest {
   if (!value || typeof value !== 'object') {
-    throw new BridgeRequestError(400, 'Invalid request.');
+    throw new Error('Invalid request.');
   }
   const request = value as Partial<ExtensionDownloadRequest>;
   if (typeof request.url !== 'string' || !isHttpUrl(request.url)) {
-    throw new BridgeRequestError(400, 'The selected value is not a valid HTTP or HTTPS URL.');
+    throw new Error('The selected value is not a valid HTTP or HTTPS URL.');
   }
   const hasFormat = allowedExtensionFormats.has(request.format as ExtensionDownloadRequest['format']);
   const hasPreset = typeof request.presetId === 'string' && Boolean(request.presetId);
   if (hasFormat === hasPreset) {
-    throw new BridgeRequestError(400, 'Choose one direct format or one saved preset.');
+    throw new Error('Choose one direct format or one saved preset.');
   }
   if (request.source !== 'active-tab' && request.source !== 'clipboard' && request.source !== 'youtube-player') {
-    throw new BridgeRequestError(400, 'Invalid URL source.');
+    throw new Error('Invalid URL source.');
   }
   const clip = parseClipRange(request.clipStart, request.clipEnd);
   const captionStyle = parseCaptionStyle(request.captionStyle);
@@ -216,7 +252,7 @@ function parseCaptionStyle(value: unknown): CaptionStyle | undefined {
   if (!value || typeof value !== 'object') {
     return undefined;
   }
-  const raw = value as { size?: unknown; position?: unknown };
+  const raw = value as { size?: unknown; position?: unknown; animate?: unknown };
   const style: CaptionStyle = {};
   if (raw.size === 'small' || raw.size === 'medium' || raw.size === 'large') {
     style.size = raw.size;
@@ -224,7 +260,12 @@ function parseCaptionStyle(value: unknown): CaptionStyle | undefined {
   if (raw.position === 'top' || raw.position === 'middle' || raw.position === 'bottom') {
     style.position = raw.position;
   }
-  return style.size || style.position ? style : undefined;
+  // Word-by-word "karaoke" highlight opt-in; passed through so a style carrying
+  // only `animate` (no size/position) is still returned.
+  if (raw.animate === 'word') {
+    style.animate = 'word';
+  }
+  return style.size || style.position || style.animate ? style : undefined;
 }
 
 function parseClipRange(start: unknown, end: unknown): Pick<ExtensionDownloadRequest, 'clipStart' | 'clipEnd'> | null {
@@ -232,11 +273,11 @@ function parseClipRange(start: unknown, end: unknown): Pick<ExtensionDownloadReq
     return null;
   }
   if (typeof start !== 'number' || typeof end !== 'number' || !Number.isFinite(start) || !Number.isFinite(end)) {
-    throw new BridgeRequestError(400, 'Clip start and end must both be numbers of seconds.');
+    throw new Error('Clip start and end must both be numbers of seconds.');
   }
   const clipStart = Math.max(0, start);
   if (end <= clipStart) {
-    throw new BridgeRequestError(400, 'Clip end must be after clip start.');
+    throw new Error('Clip end must be after clip start.');
   }
   return { clipStart, clipEnd: end };
 }
@@ -259,56 +300,5 @@ function isHttpUrl(value: string): boolean {
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch {
     return false;
-  }
-}
-
-function isAllowedExtensionOrigin(origin: string): boolean {
-  return origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
-}
-
-function isAllowedBridgeHost(host: string | undefined): boolean {
-  if (!host) {
-    return false;
-  }
-  // Only the literal loopback IP the server binds to — not "localhost", which
-  // can resolve to a DNS-controlled address and weaken anti-rebinding.
-  return host.toLowerCase() === `${bridgeHost}:${extensionBridgePort}`;
-}
-
-function applyCorsHeaders(response: ServerResponse, origin?: string): void {
-  if (origin && isAllowedExtensionOrigin(origin)) {
-    response.setHeader('Access-Control-Allow-Origin', origin);
-    response.setHeader('Vary', 'Origin');
-  }
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  response.setHeader('Cache-Control', 'no-store');
-}
-
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let length = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    length += buffer.length;
-    if (length > 16_384) {
-      throw new BridgeRequestError(413, 'Request is too large.');
-    }
-    chunks.push(buffer);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as unknown;
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  response.end(JSON.stringify(body));
-}
-
-class BridgeRequestError extends Error {
-  constructor(
-    readonly status: number,
-    message: string
-  ) {
-    super(message);
   }
 }

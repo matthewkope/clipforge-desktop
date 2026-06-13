@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "ClipForge",
-  "version": "0.2.0",
-  "description": "Send the active tab, a copied media URL, or a YouTube clip selection to ClipForge.",
-  "permissions": ["activeTab", "clipboardRead", "storage", "contextMenus", "notifications"],
-  "host_permissions": ["http://127.0.0.1:38473/*"],
+  "version": "0.3.0",
+  "description": "Send the active tab, a copied media URL, or a clip selection to ClipForge.",
+  "permissions": ["activeTab", "clipboardRead", "storage", "contextMenus", "notifications", "nativeMessaging"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAswUVGEHsZfNLhSsVytmD0CnjGyiT4ETQpq14eim5obaWpgyzPKapNtZ478n1CaqLsyre4mM8HToDRyb6XoyR1cMPfSGBqCfMGgUKA87gQ5WDzLH6oCv5wo59UU3Ay0hJ9fY0D9Tdw0lk9BjFPYP00b5phpBIIsQhyES7MGN4CVepeqYqomhCJqaQxEMTvVx8T0EwmGfvDOBy5wp3z7i5xcG4+FR4hlE+jS3g4OQ8ABqXPaDZmpv3gAxzzpm3wxF1Uu5kD6awlEsokh7Y03DYkOe4f7bOcjD3vpjlChPqFm8EyDuOzPOiYI47C/MW8WpyWCouekXeDEWeFPhHCw2I0wIDAQAB",
   "background": {
     "service_worker": "background.js"
   },

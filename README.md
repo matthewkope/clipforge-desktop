@@ -13,9 +13,13 @@ Only download content you own, have rights to, or are permitted to save.
   transcripts (source captions first, whisper.cpp fallback).
 - **YouTube clips** — the browser extension adds a scissor button to the
   YouTube player. Drag start/end markers directly on the playbar (with a
-  dimmed frame-by-frame preview), fine-tune the times, pick a saved preset,
-  and the desktop app downloads only that section via yt-dlp
-  `--download-sections`.
+  dimmed frame-by-frame preview and an audio waveform under the scrubber), or
+  search the transcript to jump the clip points to a phrase. Export the
+  section with optional **9:16 vertical crop**, **burned-in captions** (static,
+  or word-by-word **karaoke** highlighting), or **GIF** — the desktop app
+  downloads only that section via yt-dlp `--download-sections`.
+- **Twitch, Vimeo & Reddit clips** — the same clip panel works on these sites;
+  the desktop app handles them via yt-dlp.
 - **Instagram** — reels and videos through the standard video workflow;
   photo posts and carousels analyze into a selectable grid (first photo as
   the cover, photo/video counts shown) and download via gallery-dl.
@@ -24,8 +28,17 @@ Only download content you own, have rights to, or are permitted to save.
   the same selectable grid.
 - **Pinterest** — pins, boards, and board sections with rate-limit-aware
   queueing, hidden download archives, and Brave cookie integration.
+- **SponsorBlock auto-cut** — optionally remove sponsor, intro, outro, and
+  self-promo segments from full downloads using yt-dlp's native SponsorBlock
+  integration (toggle in **Settings**, off by default).
+- **Downloads queue, history & batch** — paste many URLs at once, run several
+  downloads concurrently, and browse a persisted history with cover thumbnails
+  and search.
+- **Watch folders** — subscribe to a channel, playlist, or profile and have
+  new uploads download automatically on a schedule.
 - **Browser extension** — send the active tab, a clipboard URL, or a YouTube
-  clip selection to the app with one click, using saved format presets.
+  clip selection to the app with one click, using saved format presets. It
+  connects over Chrome Native Messaging (no local network port).
 
 ## Supported Tools
 
@@ -220,14 +233,19 @@ format presets.
 On YouTube watch pages and Shorts, the extension also adds a **scissor button
 to the player controls**. Clicking it opens a clip panel: drag the start/end
 markers directly on YouTube's progress bar (the screen dims and a live frame
-preview follows the marker, like native scrubbing), refine the times in the
-panel or grab them from the playhead, preview the range, choose a preset, and
-send it to ClipForge. The app downloads only that section, saved as
-`Title [clip 1.23-2.45].mp4` so it never overwrites a full download.
+preview follows the marker, like native scrubbing, with an audio waveform under
+the scrubber), search the transcript to set the clip points, refine the times
+in the panel or grab them from the playhead, and preview the range. You can
+export with a **9:16 vertical crop**, **burned-in captions** (static or
+word-by-word **karaoke** highlighting), or as a **GIF**, and the app saves only
+that section as `Title [clip 1.23-2.45].mp4` so it never overwrites a full
+download. The same clip panel also works on Twitch, Vimeo, and Reddit.
 
-The extension connects only to `127.0.0.1:38473`. Before using it, keep
-ClipForge open, choose a save folder, and create at least one preset under
-**Formats > Presets**.
+The extension talks to the desktop app over **Chrome Native Messaging** — there
+is no listening network port. Register the host once with
+`npm run install:extension-host`, then keep ClipForge open, choose a save
+folder, and create at least one preset under **Formats > Presets**. See
+[`extension/README.md`](extension/README.md) for full extension setup.
 
 ## Troubleshooting
 

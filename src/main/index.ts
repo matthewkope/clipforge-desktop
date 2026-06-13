@@ -156,21 +156,28 @@ function hardenWebContents(window: BrowserWindow): void {
 }
 
 // Only one ClipForge instance may run: a second launch would fail to bind the
-// extension bridge port and could double-run the watch scheduler. Hand off to
+// extension bridge socket and could double-run the watch scheduler. Hand off to
 // the existing window instead of starting a second copy.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+//
+// This applies to packaged builds only. In dev (Vite dev server) we skip the
+// lock so the dev build can run alongside an installed copy without silently
+// quitting.
+const isDevRun = Boolean(process.env.VITE_DEV_SERVER_URL);
+const gotSingleInstanceLock = isDevRun || app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
+  if (!isDevRun) {
+    app.on('second-instance', () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
       }
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+    });
+  }
   startClipForge();
 }
 

@@ -258,6 +258,17 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
       break;
   }
 
+  // SponsorBlock auto-cut: let yt-dlp query the SponsorBlock API itself and
+  // remove the matched segments with ffmpeg. Only for full media downloads
+  // (not subtitles/transcripts or GIF) and never alongside clip ranges, since
+  // --sponsorblock-remove conflicts with --download-sections clipping.
+  if (request.sponsorBlockCategories?.length && !request.clipRange && isSponsorBlockOutputType(outputType)) {
+    const categories = filterSponsorBlockCategories(request.sponsorBlockCategories);
+    if (categories.length) {
+      args.push('--sponsorblock-remove', categories.join(','));
+    }
+  }
+
   args.push(
     '--progress-template',
     'download:%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress.filename)s',
@@ -266,6 +277,34 @@ export function buildDownloadArgs(request: DownloadRequest, outputType: OutputTy
   );
 
   return args;
+}
+
+const VALID_SPONSORBLOCK_CATEGORIES = new Set([
+  'sponsor',
+  'selfpromo',
+  'interaction',
+  'intro',
+  'outro',
+  'preview',
+  'music_offtopic',
+  'filler'
+]);
+
+// Output types that produce a real media file yt-dlp can post-process with
+// SponsorBlock (audio/video downloads). GIF and subtitle/transcript types are
+// excluded.
+function isSponsorBlockOutputType(outputType: OutputType): boolean {
+  return (
+    outputType === 'mp4' ||
+    outputType === 'webm' ||
+    outputType === 'mp3' ||
+    outputType === 'wav' ||
+    outputType === 'm4a'
+  );
+}
+
+function filterSponsorBlockCategories(categories: string[]): string[] {
+  return categories.filter((category) => VALID_SPONSORBLOCK_CATEGORIES.has(category));
 }
 
 // Fetches captions only, into an arbitrary output template (used for clip

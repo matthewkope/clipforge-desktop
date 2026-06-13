@@ -691,6 +691,21 @@ dd {
   line-height: 1.35;
 }
 
+.toggle-field .toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 750;
+}
+
+.toggle-field .toggle-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: #0b9aac;
+  cursor: pointer;
+}
+
 .preset-panel {
   display: grid;
   min-width: 0;

@@ -97,6 +97,12 @@ const whisperModelStorageKey = 'clipforge.whisperModelPath';
 const saveFolderStorageKey = 'clipforge.saveFolder';
 const downloadConcurrencyStorageKey = 'clipforge.downloadConcurrency';
 const filenameTemplateStorageKey = 'clipforge.filenameTemplate';
+const sponsorBlockEnabledStorageKey = 'clipforge.sponsorBlockEnabled';
+
+// SponsorBlock categories cut out when the auto-cut toggle is enabled. yt-dlp
+// queries the SponsorBlock API itself and removes these segments with ffmpeg
+// for full (non-clip) video/audio downloads.
+const sponsorBlockDefaultCategories = ['sponsor', 'intro', 'outro', 'selfpromo'];
 
 function App() {
   const [activeSection, setActiveSection] = useState<Section>('youtube');
@@ -122,6 +128,7 @@ function App() {
     return Number.isInteger(stored) && stored >= 1 && stored <= 3 ? stored : 1;
   });
   const [filenameTemplate, setFilenameTemplate] = useState(() => window.localStorage.getItem(filenameTemplateStorageKey) ?? '');
+  const [sponsorBlockEnabled, setSponsorBlockEnabled] = useState(() => window.localStorage.getItem(sponsorBlockEnabledStorageKey) === 'true');
   const [saveFolderOverride, setSaveFolderOverride] = useState('');
   const [status, setStatus] = useState('Paste a URL to begin.');
   const [error, setError] = useState('');
@@ -242,6 +249,10 @@ function App() {
       window.localStorage.removeItem(filenameTemplateStorageKey);
     }
   }, [filenameTemplate]);
+
+  useEffect(() => {
+    window.localStorage.setItem(sponsorBlockEnabledStorageKey, String(sponsorBlockEnabled));
+  }, [sponsorBlockEnabled]);
 
   const saveFolder = saveFolderOverride || defaultSaveFolder;
 
@@ -374,7 +385,8 @@ function App() {
         cookieSource,
         cookieFilePath: cookieFilePath || undefined,
         whisperModelPath: whisperModelPath || undefined,
-        outputTemplate: filenameTemplate || undefined
+        outputTemplate: filenameTemplate || undefined,
+        sponsorBlockCategories: sponsorBlockEnabled ? [...sponsorBlockDefaultCategories] : undefined
       });
       setActiveSection('downloads');
       setStatus(`Queued ${queued} download${queued === 1 ? '' : 's'}.`);
@@ -620,7 +632,8 @@ function App() {
         cookieSource,
         cookieFilePath,
         whisperModelPath,
-        outputTemplate: filenameTemplate || undefined
+        outputTemplate: filenameTemplate || undefined,
+        sponsorBlockCategories: sponsorBlockEnabled ? [...sponsorBlockDefaultCategories] : undefined
       })
     );
     setDownloadId(started.downloadId);
@@ -685,7 +698,8 @@ function App() {
           cookieFilePath,
           whisperModelPath,
           qualityId,
-          outputTemplate: filenameTemplate || undefined
+          outputTemplate: filenameTemplate || undefined,
+          sponsorBlockCategories: sponsorBlockEnabled ? [...sponsorBlockDefaultCategories] : undefined
         })
       );
       setDownloadId(started.downloadId);
@@ -761,7 +775,8 @@ function App() {
             clipCrop: request.crop,
             burnCaptions: request.burnCaptions,
             captionStyle: request.captionStyle,
-            outputTemplate: filenameTemplate || undefined
+            outputTemplate: filenameTemplate || undefined,
+            sponsorBlockCategories: sponsorBlockEnabled ? [...sponsorBlockDefaultCategories] : undefined
           }),
           'extension'
         );
@@ -786,7 +801,8 @@ function App() {
               whisperModelPath,
               forceOverwrite: true,
               captionStyle: request.captionStyle,
-              outputTemplate: filenameTemplate || undefined
+              outputTemplate: filenameTemplate || undefined,
+              sponsorBlockCategories: sponsorBlockEnabled ? [...sponsorBlockDefaultCategories] : undefined
             }),
             'extension'
           );
@@ -972,20 +988,12 @@ function App() {
         </div>
         <div className="topbar-actions">
           <button
-            className={`icon-button ${activeSection === 'watch' ? 'selected' : ''}`}
-            onClick={() => setActiveSection('watch')}
-            title="Watch folders"
-            aria-label="Watch folders"
+            className={`icon-button ${activeSection !== 'downloads' && activeSection !== 'settings' && activeSection !== 'watch' ? 'selected' : ''}`}
+            onClick={goHome}
+            title="Home"
+            aria-label="Home"
           >
-            <Folder size={21} />
-          </button>
-          <button
-            className={`icon-button ${activeSection === 'downloads' ? 'selected' : ''}`}
-            onClick={() => setActiveSection('downloads')}
-            title="Downloads"
-            aria-label="Downloads"
-          >
-            <Download size={21} />
+            <Home size={21} />
           </button>
           <button
             className={`icon-button ${activeSection === 'settings' ? 'selected' : ''}`}
@@ -996,12 +1004,20 @@ function App() {
             <Settings size={21} />
           </button>
           <button
-            className={`icon-button ${activeSection !== 'downloads' && activeSection !== 'settings' && activeSection !== 'watch' ? 'selected' : ''}`}
-            onClick={goHome}
-            title="Home"
-            aria-label="Home"
+            className={`icon-button ${activeSection === 'downloads' ? 'selected' : ''}`}
+            onClick={() => setActiveSection('downloads')}
+            title="Downloads"
+            aria-label="Downloads"
           >
-            <Home size={21} />
+            <Download size={21} />
+          </button>
+          <button
+            className={`icon-button ${activeSection === 'watch' ? 'selected' : ''}`}
+            onClick={() => setActiveSection('watch')}
+            title="Watch folders"
+            aria-label="Watch folders"
+          >
+            <Folder size={21} />
           </button>
         </div>
       </section>
@@ -1079,6 +1095,8 @@ function App() {
           onDownloadConcurrencyChange={setDownloadConcurrency}
           filenameTemplate={filenameTemplate}
           onFilenameTemplateChange={setFilenameTemplate}
+          sponsorBlockEnabled={sponsorBlockEnabled}
+          onSponsorBlockEnabledChange={setSponsorBlockEnabled}
         />
       ) : activeSection === 'watch' ? (
         <WatchPanel
@@ -1295,7 +1313,9 @@ function SettingsPanel({
   downloadConcurrency,
   onDownloadConcurrencyChange,
   filenameTemplate,
-  onFilenameTemplateChange
+  onFilenameTemplateChange,
+  sponsorBlockEnabled,
+  onSponsorBlockEnabledChange
 }: {
   dependencies: DependencyStatus[];
   cookieSource: CookieSource;
@@ -1324,6 +1344,8 @@ function SettingsPanel({
   onDownloadConcurrencyChange: (n: number) => void;
   filenameTemplate: string;
   onFilenameTemplateChange: (template: string) => void;
+  sponsorBlockEnabled: boolean;
+  onSponsorBlockEnabledChange: (enabled: boolean) => void;
 }) {
   function updatePinterestSetting<K extends keyof PinterestSafeModeSettings>(key: K, value: PinterestSafeModeSettings[K]) {
     onPinterestSettingsChange({ ...pinterestSettings, [key]: value });
@@ -1402,6 +1424,19 @@ function SettingsPanel({
             />
             <span className="hint">
               Supported placeholders: {'{title}'} {'{uploader}'} {'{date}'} {'{id}'}. Leave blank for the default filename.
+            </span>
+          </label>
+          <label className="field-label toggle-field">
+            <span className="toggle-row">
+              <input
+                type="checkbox"
+                checked={sponsorBlockEnabled}
+                onChange={(event) => onSponsorBlockEnabledChange(event.target.checked)}
+              />
+              <span>Auto-cut sponsor segments (SponsorBlock)</span>
+            </span>
+            <span className="hint">
+              Removes sponsor, intro, outro, and self-promo segments from full video/audio downloads using yt-dlp&apos;s SponsorBlock support. Skipped for clip ranges.
             </span>
           </label>
         </section>
@@ -1642,6 +1677,7 @@ function buildVideoDownloadRequest(
     burnCaptions?: boolean;
     captionStyle?: CaptionStyle;
     outputTemplate?: string;
+    sponsorBlockCategories?: string[];
   }
 ): DownloadRequest {
   return {
@@ -1664,7 +1700,8 @@ function buildVideoDownloadRequest(
     clipCrop: options.clipCrop,
     burnCaptions: options.burnCaptions,
     captionStyle: options.captionStyle,
-    outputTemplate: options.outputTemplate
+    outputTemplate: options.outputTemplate,
+    sponsorBlockCategories: options.sponsorBlockCategories
   };
 }
 
