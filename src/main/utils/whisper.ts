@@ -98,15 +98,24 @@ export async function resolveWhisperCppModel(): Promise<string> {
     return configured;
   }
 
+  const home = process.env.HOME ?? '';
+
+  // Prefer whisper.cpp models that already exist on this machine so we never
+  // ask the user to download one we already have. The gretchen-flow cache holds
+  // the large-v3-turbo model (most accurate + fast), so it leads the list.
   const candidates = [
+    path.join(home, '.cache/gretchen-flow/models/ggml-large-v3-turbo.bin'),
+    path.join(home, '.cache/gretchen-flow/models/ggml-large-v3-turbo-q5_0.bin'),
     '/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin',
     '/opt/homebrew/share/whisper-cpp/models/ggml-base.bin',
     '/usr/local/share/whisper-cpp/models/ggml-base.en.bin',
     '/usr/local/share/whisper-cpp/models/ggml-base.bin',
-    path.join(process.env.HOME ?? '', 'models/ggml-base.en.bin'),
-    path.join(process.env.HOME ?? '', 'models/ggml-base.bin'),
-    path.join(process.env.HOME ?? '', 'Downloads/ggml-base.en.bin'),
-    path.join(process.env.HOME ?? '', 'Downloads/ggml-base.bin')
+    path.join(home, 'models/ggml-base.en.bin'),
+    path.join(home, 'models/ggml-base.bin'),
+    path.join(home, 'Downloads/ggml-small.bin'),
+    path.join(home, 'Desktop/General/ggml-small.bin'),
+    path.join(home, 'Downloads/ggml-base.en.bin'),
+    path.join(home, 'Downloads/ggml-base.bin')
   ];
 
   for (const candidate of candidates) {
@@ -115,7 +124,51 @@ export async function resolveWhisperCppModel(): Promise<string> {
     }
   }
 
+  // Fallback: scan the known model directories for any ggml-*.bin and pick the
+  // largest one (bigger model ≈ more capable: turbo/large > small > base).
+  const scanned = await largestModelInDirectories([
+    path.join(home, '.cache/gretchen-flow/models'),
+    path.join(home, 'models'),
+    path.join(home, 'Downloads'),
+    path.join(home, 'Desktop/General'),
+    '/opt/homebrew/share/whisper-cpp/models',
+    '/usr/local/share/whisper-cpp/models'
+  ]);
+  if (scanned) {
+    return scanned;
+  }
+
   throw new Error('Choose a whisper.cpp model file before generating a transcript without source captions.');
+}
+
+// Returns the path of the largest ggml-*.bin found across the given directories,
+// or null if none exist. Used as a robust fallback so newly added local models
+// are picked up without editing the explicit candidate list above.
+async function largestModelInDirectories(directories: string[]): Promise<string | null> {
+  let best: { path: string; size: number } | null = null;
+  for (const directory of directories) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(directory);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!/^ggml-.*\.bin$/u.test(entry)) {
+        continue;
+      }
+      const fullPath = path.join(directory, entry);
+      try {
+        const stat = await fs.stat(fullPath);
+        if (stat.isFile() && (!best || stat.size > best.size)) {
+          best = { path: fullPath, size: stat.size };
+        }
+      } catch {
+        // Unreadable entry; skip it.
+      }
+    }
+  }
+  return best?.path ?? null;
 }
 
 async function homebrewWhisperCppBinDirectories(): Promise<string[]> {
