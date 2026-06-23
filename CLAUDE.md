@@ -120,6 +120,12 @@ covering srt/karaoke cue utils and the extension request router).
 - Facebook/Pinterest have gallery grids with selectable media items.
 - Pinterest has the most custom logic because board previews and downloads were unreliable with naive gallery-dl ranges.
 
+### SoundCloud
+
+- SoundCloud is an audio-first tab (custom `SoundCloudIcon` + `brand-soundcloud`).
+- `urlRouter` detects `soundcloud.com`/`*.soundcloud.com`/`snd.sc` → platform `soundcloud`, intent `soundcloud-track` or `soundcloud-set` (`/sets/`).
+- `App.tsx` analyze() routes it through the same yt-dlp `analyzeUrl` path as YouTube/TikTok/Twitch (no `hasVideoFormats` guard — tracks are audio-only); the user picks MP3/WAV/M4A. No clip picker.
+
 ## Preferred Video Architecture
 
 Use one shared video-download pipeline for YouTube, Instagram, TikTok, Facebook video, and General URL video:

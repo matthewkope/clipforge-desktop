@@ -81,6 +81,10 @@ over the main video. Either opens the same clip panel (without progress-bar
 markers or transcript search). The current page URL is sent to the desktop
 app, which handles those sites via yt-dlp.
 
+On SoundCloud (and most other yt-dlp-supported sites) there is no clip panel,
+but **Current tab** / **Paste URL** still send the page to the desktop app,
+which downloads the track or set as audio.
+
 You can also right-click any link, video, or page and choose
 **Download with ClipForge** to send its URL as an MP4 download; a browser
 notification reports the result.

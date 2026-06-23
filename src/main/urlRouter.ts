@@ -38,6 +38,13 @@ export function detectPlatform(input: string): Platform {
     if (hostname === 'twitch.tv' || hostname.endsWith('.twitch.tv')) {
       return 'twitch';
     }
+    if (
+      hostname === 'soundcloud.com' ||
+      hostname.endsWith('.soundcloud.com') || // m./on./api. share + mobile hosts
+      hostname === 'snd.sc' // SoundCloud share-link shortener
+    ) {
+      return 'soundcloud';
+    }
   } catch {
     return 'unknown';
   }
@@ -122,6 +129,12 @@ export function detectMediaIntent(input: string): MediaIntent {
       // Channel/live URLs still point at video content.
       return 'twitch-video';
     }
+    case 'soundcloud':
+      // /sets/ are playlists/albums; everything else is treated as a single track.
+      if (path.includes('/sets/')) {
+        return 'soundcloud-set';
+      }
+      return 'soundcloud-track';
     case 'unknown':
       return 'unknown';
   }

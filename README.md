@@ -24,6 +24,7 @@ Only download content you own, have rights to, or are permitted to save.
   photo posts and carousels analyze into a selectable grid (first photo as
   the cover, photo/video counts shown) and download via gallery-dl.
 - **TikTok, X/Twitter** — video downloads with the same format controls.
+- **SoundCloud** — tracks, sets, and playlists as MP3, WAV, or M4A audio.
 - **Facebook** — videos via yt-dlp; photos and albums via gallery-dl with
   the same selectable grid.
 - **Pinterest** — pins, boards, and board sections with rate-limit-aware

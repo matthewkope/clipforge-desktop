@@ -86,6 +86,14 @@ const capabilities: Record<string, PlatformCapability> = {
       ['Formats', videoFormats],
       ['Clip picker', 'Scissor button in the player control bar to pick a range']
     ]
+  },
+  soundcloud: {
+    summary: 'Tracks, sets, and playlists.',
+    rows: [
+      ['Download', 'Single tracks and full sets/playlists'],
+      ['Formats', 'MP3, WAV, and M4A audio'],
+      ['Sign-in', 'Uses browser cookies for tracks that require a login']
+    ]
   }
 };
 

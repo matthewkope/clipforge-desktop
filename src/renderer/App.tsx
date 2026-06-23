@@ -65,6 +65,7 @@ const platformSections: Array<{ id: Platform; label: string; icon: NavIcon }> = 
   { id: 'x', label: 'X', icon: XIcon },
   { id: 'reddit', label: 'Reddit', icon: RedditIcon },
   { id: 'twitch', label: 'Twitch', icon: Twitch },
+  { id: 'soundcloud', label: 'SoundCloud', icon: SoundCloudIcon },
   { id: 'unknown', label: 'General URL', icon: Compass }
 ];
 
@@ -300,11 +301,18 @@ function App() {
     activeSection === 'youtube' ||
     activeSection === 'tiktok' ||
     activeSection === 'twitch' ||
+    activeSection === 'soundcloud' ||
     (activeSection === 'x' && galleryMedia === null) ||
     (activeSection === 'instagram' && galleryMedia === null) ||
     (activeSection === 'facebook' && media !== null) ||
     (activeSection === 'reddit' && media !== null);
-  const hasGallery = Boolean(galleryMedia && activeSection !== 'youtube' && activeSection !== 'tiktok' && activeSection !== 'twitch');
+  const hasGallery = Boolean(
+    galleryMedia &&
+      activeSection !== 'youtube' &&
+      activeSection !== 'tiktok' &&
+      activeSection !== 'twitch' &&
+      activeSection !== 'soundcloud'
+  );
   const canDownloadVideo = Boolean(media && saveFolder && outputTypes.length > 0 && hasTool('yt-dlp', dependencies));
   const canDownloadGallery = Boolean(galleryMedia && saveFolder && !downloadId && hasTool(galleryMedia.rawTool, dependencies));
 
@@ -417,6 +425,7 @@ function App() {
         detected.platform === 'youtube' ||
         detected.platform === 'tiktok' ||
         detected.platform === 'twitch' ||
+        detected.platform === 'soundcloud' ||
         (detected.platform === 'instagram' && detected.intent === 'instagram-video')
       ) {
         const info = await window.clipForge.analyzeUrl(targetUrl, cookieSource, cookieFilePath || undefined);
@@ -433,7 +442,9 @@ function App() {
         setQualityId('best');
         const preferredLanguage = preferredSubtitleLanguage(info);
         setSubtitleLanguage(preferredLanguage);
-        if (autoDownload) {
+        // SoundCloud is audio-only: skip the paste fast-path auto-download so the
+        // user can pick MP3/WAV/M4A instead of silently grabbing the default.
+        if (autoDownload && detected.platform !== 'soundcloud') {
           await startAnalyzedVideoDownload(info, targetUrl, preferredLanguage);
           return;
         }
@@ -969,7 +980,8 @@ function App() {
                 { id: 'pinterest', label: 'Pinterest', icon: PinterestIcon },
                 { id: 'x', label: 'X / Twitter', icon: XIcon },
                 { id: 'reddit', label: 'Reddit', icon: RedditIcon },
-                { id: 'twitch', label: 'Twitch', icon: Twitch }
+                { id: 'twitch', label: 'Twitch', icon: Twitch },
+                { id: 'soundcloud', label: 'SoundCloud', icon: SoundCloudIcon }
               ]}
             />
           </div>
@@ -1282,6 +1294,15 @@ function XIcon({ size = 24, className }: { size?: number; className?: string }) 
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M18.9 2H22l-6.77 7.74L23.2 22h-6.24l-4.89-6.39L6.48 22H3.36l7.27-8.31L2.98 2h6.4l4.42 5.84L18.9 2Zm-1.1 17.84h1.72L8.44 4.05H6.6L17.8 19.84Z" />
+    </svg>
+  );
+}
+
+function SoundCloudIcon({ size = 24, className }: { size?: number; className?: string }) {
+  // The SoundCloud mark: a row of equalizer bars beside a cloud (simple-icons path).
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M1.175 12.225c-.051 0-.094.046-.101.1l-.233 2.154.233 2.105c.007.058.05.098.101.098.05 0 .09-.04.099-.098l.255-2.105-.27-2.154c0-.057-.045-.1-.09-.1m-.899.828c-.06 0-.091.037-.104.094L0 14.479l.165 1.308c0 .055.045.094.09.094s.089-.045.104-.104l.21-1.319-.21-1.334c0-.061-.044-.09-.09-.09m1.83-1.229c-.061 0-.12.045-.12.104l-.21 2.563.225 2.458c0 .06.045.12.119.12.061 0 .105-.061.121-.12l.254-2.474-.254-2.548c-.016-.06-.061-.12-.121-.12m.945-.089c-.075 0-.135.06-.15.135l-.193 2.64.21 2.544c.016.077.075.138.149.138.075 0 .135-.061.15-.151l.24-2.532-.24-2.623c0-.075-.06-.135-.135-.135m1.155.36c-.005-.09-.075-.149-.159-.149-.09 0-.158.06-.164.149l-.217 2.43.2 2.563c0 .09.075.157.159.157.074 0 .148-.068.148-.158l.227-2.563-.227-2.444m.809-1.709c-.101 0-.18.09-.18.181l-.21 3.957.187 2.563c0 .09.08.164.18.164.094 0 .174-.09.18-.18l.209-2.563-.209-3.972c-.008-.104-.088-.18-.18-.18m.959-.914c-.105 0-.195.09-.203.194l-.18 4.872.165 2.548c0 .12.09.209.195.209.104 0 .194-.089.21-.209l.193-2.548-.192-4.856c-.016-.12-.105-.21-.21-.21m.989-.449c-.122 0-.215.09-.222.213l-.176 5.292.165 2.53c0 .121.094.226.218.226.12 0 .218-.09.224-.225l.184-2.53-.184-5.276c-.007-.135-.105-.232-.226-.232m1.245.045c0-.135-.105-.241-.24-.241-.124 0-.24.105-.24.241l-.149 5.503.165 2.516c0 .135.104.24.24.24s.24-.12.24-.256l.18-2.5-.18-5.503m.749-.255c-.135 0-.255.12-.255.256l-.15 5.247.15 2.498c0 .15.12.255.255.255s.255-.12.255-.27l.165-2.483-.165-5.232c0-.149-.12-.27-.27-.27m1.005.166c-.151 0-.27.12-.288.271l-.135 5.05.15 2.476c0 .149.12.285.285.285.149 0 .274-.135.288-.285l.15-2.476-.165-5.05c-.014-.151-.135-.271-.285-.271m1.184-1.066c-.061-.029-.135-.045-.195-.045s-.135.016-.195.045c-.105.061-.18.166-.18.301v.045l-.119 6.066.135 2.451v.016c.016.135.119.24.245.24.06 0 .135-.029.18-.061.075-.061.135-.149.135-.255v-.061l.15-2.451-.15-6.066c0-.135-.075-.24-.18-.301m.929-.359c-.182 0-.345.166-.345.346v.029l-.105 6.42.105 2.43c.016.184.165.331.345.331.181 0 .33-.165.345-.346l.119-2.43-.119-6.404c0-.196-.166-.346-.345-.346m1.245-.42c-.181 0-.345.166-.345.346v.045l-.105 6.81.105 2.413c.016.18.165.331.345.331.18 0 .345-.151.345-.331l.119-2.43-.119-6.793c0-.196-.166-.346-.345-.346m1.246-.166c-.196 0-.345.165-.345.36l-.09 6.96.09 2.4c.014.196.165.345.345.345.179 0 .345-.165.345-.345l.105-2.4-.105-6.96c0-.196-.166-.36-.345-.36m11.221 5.967c-.39 0-.769.075-1.111.225-.227-2.563-2.373-4.56-4.99-4.56-.629 0-1.244.121-1.799.331-.211.075-.271.165-.271.331v10.18c0 .179.135.314.314.331h7.857c1.561 0 2.834-1.26 2.834-2.82 0-1.561-1.273-2.835-2.834-2.835" />
     </svg>
   );
 }

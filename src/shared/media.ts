@@ -13,7 +13,7 @@ export type OutputType =
   | 'timed-transcript';
 export type CookieSource = 'none' | 'chrome' | 'safari' | 'firefox' | 'edge' | 'brave';
 export type YtDlpStrategy = 'standard' | 'youtube-default-no-web' | 'youtube-tv' | 'youtube-mobile';
-export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'x' | 'reddit' | 'twitch' | 'unknown';
+export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'pinterest' | 'x' | 'reddit' | 'twitch' | 'soundcloud' | 'unknown';
 export type MediaIntent =
   | 'instagram-image'
   | 'instagram-video'
@@ -30,6 +30,8 @@ export type MediaIntent =
   | 'reddit-post'
   | 'twitch-video'
   | 'twitch-clip'
+  | 'soundcloud-track'
+  | 'soundcloud-set'
   | 'youtube-video'
   | 'youtube-shorts'
   | 'youtube-playlist'

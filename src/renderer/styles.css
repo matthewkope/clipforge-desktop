@@ -1479,6 +1479,10 @@ dd {
   color: #9146ff;
 }
 
+.brand-soundcloud {
+  color: #ff5500;
+}
+
 /* Specificity matches `.pinterest-settings > label` so this row layout wins
    over the generic grid label styling inside the History card. */
 label.history-search {
